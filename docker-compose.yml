@@ -1,0 +1,13 @@
+services:
+  agent-core:
+    build: .
+    env_file: .env
+    volumes:
+      - ./src:/app/src
+      - ./storage:/app/storage
+    ports:
+      - "8080:8000"
+    restart: unless-stopped
+    # GitHub Copilot SDK might need some env mapping if it expects specific keys
+    environment:
+      - GITHUB_TOKEN=${COPILOT_GITHUB_TOKEN}
