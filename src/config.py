@@ -6,6 +6,8 @@ class Settings(BaseSettings):
     # GitHub Copilot SDK
     COPILOT_GITHUB_TOKEN: str
     COPILOT_MODEL: str = "claude-3.5-sonnet"
+    COPILOT_EVOLUTION_MODEL: str = "claude-3.5-sonnet" # Model specifically for self-evolution tasks
+    GITHUB_REPO_NAME: Optional[str] = None # e.g. "owner/repo"
 
     # Telegram Bot
     TELEGRAM_BOT_TOKEN: Optional[str] = None

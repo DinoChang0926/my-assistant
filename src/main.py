@@ -13,6 +13,8 @@ from .brain.orchestrator import TaskOrchestrator
 from .tools.registry import ToolRegistry
 from .perception.gateway import UnifiedGateway
 from .perception import rest_api
+from .perception.telegram_bot import TelegramBot
+import asyncio
 
 # Define lifespan context manager
 @asynccontextmanager
@@ -26,10 +28,17 @@ async def lifespan(app: FastAPI):
         "env": os.environ.copy()
     })
     
+    telegram_bot = None
+
     # 2. Setup Components
     try:
         session_manager = SessionManager(client)
-        tool_registry = ToolRegistry() # Add tools here if needed
+        
+        # Initialize Registry and Load Tools
+        tool_registry = ToolRegistry()
+        tool_registry.load_static_tools()
+        tool_registry.load_dynamic_tools()
+        
         orchestrator = TaskOrchestrator(session_manager, tool_registry)
         
         router = IntentClassifier()
@@ -37,6 +46,21 @@ async def lifespan(app: FastAPI):
         
         # 3. Inject Dependency
         rest_api.set_gateway(gateway)
+        rest_api.set_tool_registry(tool_registry)
+        
+        # 4. Initialize Telegram Bot
+        if settings.TELEGRAM_BOT_TOKEN:
+            try:
+                telegram_bot = TelegramBot(gateway)
+                await telegram_bot.initialize()
+                
+                # Run polling in separate thread to avoid event loop conflicts
+                import threading
+                bot_thread = threading.Thread(target=telegram_bot.run_in_thread, daemon=True)
+                bot_thread.start()
+                
+            except Exception as e:
+                print(f"Failed to start Telegram Bot: {e}")
         
         print("AI Agent Components Initialized.")
         
@@ -54,6 +78,10 @@ async def lifespan(app: FastAPI):
         await session_manager.cleanup_all()
         if hasattr(client, 'stop'):
             await client.stop()
+        
+        if telegram_bot:
+            await telegram_bot.stop()
+            
     except Exception as e:
         print(f"Error during shutdown: {e}")
 

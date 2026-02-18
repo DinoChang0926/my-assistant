@@ -4,6 +4,7 @@ from ..core.events import AgentEvent, AgentResponse
 from ..core.interfaces import RouteConfig
 from ..memory.manager import SessionManager
 from ..tools.registry import ToolRegistry
+from .prompts import SKILL_ACQUISITION_PROMPT
 from copilot import MessageOptions
 
 class TaskOrchestrator:
@@ -89,26 +90,44 @@ class TaskOrchestrator:
         
         # Execute tool
         tool = self.tool_registry.get_tool(t_name)
+        error_context = None
+
         if tool:
             print(f"Executing tool: {tool.name}")
             try:
                 result = await tool.execute(**t_args) if t_args else await tool.execute()
-                # Submit tool result back to session
-                if hasattr(session, 'submit_tool_outputs'):
-                    await session.submit_tool_outputs([{
-                        "call_id": t_call_id,
-                        "output": str(result)
-                    }])
-                else:
-                    # Fallback to internal protocol call if method is missing
-                    await session._client.request("session.submitToolOutputs", {
-                        "sessionId": session.session_id,
-                        "outputs": [{
-                            "callId": t_call_id,
-                            "output": str(result)
-                        }]
-                    })
             except Exception as e:
-                print(f"Tool execution failed: {e}")
+                import traceback
+                error_msg = f"Tool '{t_name}' execution failed: {str(e)}\n{traceback.format_exc()}"
+                print(error_msg)
+                error_context = error_msg
+                result = {"status": "error", "message": error_msg}
         else:
-            print(f"Tool not found: {t_name}")
+            error_msg = f"Tool '{t_name}' not found in registry."
+            print(error_msg)
+            error_context = error_msg
+            result = {"status": "error", "message": error_msg}
+
+        # Submit tool result back to session
+        # If there was an error, we append the SKILL_ACQUISITION_PROMPT to the result
+        output_content = str(result)
+        if error_context:
+            output_content += "\n\n" + SKILL_ACQUISITION_PROMPT.format(error_context=error_context)
+
+        try:
+            if hasattr(session, 'submit_tool_outputs'):
+                await session.submit_tool_outputs([{
+                    "call_id": t_call_id,
+                    "output": output_content
+                }])
+            else:
+                # Fallback to internal protocol call
+                await session._client.request("session.submitToolOutputs", {
+                    "sessionId": session.session_id,
+                    "outputs": [{
+                        "callId": t_call_id,
+                        "output": output_content
+                    }]
+                })
+        except Exception as e:
+            print(f"Failed to submit tool outputs: {e}")

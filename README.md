@@ -5,10 +5,10 @@
 ## 🌟 核心特性
 
 - **模組化單體架構**: 清楚的層級劃分：感知層、大腦層、記憶層、工具層。
-- **GitHub Copilot SDK 原生持久化**: 利用 SDK 的 `config_dir` 機制，自動保存與恢復對話狀態，支援跨重啟的長期記憶。
-- **兩級意圖路由**: 支援快速指令解析與基於關鍵字的 LLM 路由（Coding vs Chat）。
-- **記憶重生機制 (Summarize & Respawn)**: 自動監控轉載輪次 (turn_count)，在對話過長時執行重生策略。
-- **雙軌輸入支援**: 同時支援 FastAPI REST API 與 Telegram Bot (已預留架構)。
+- **自我進化機制 (Agentic Self-Evolution)**: Agent 可於運行時偵測能力缺失，自動編寫、測試並部署新工具，無需重啟服務。
+- **元工具系統 (Meta-Tools)**: 提供 `create_tool`、`inspect_tool`、`reload_tools` 等核心開發工具。
+- **安全代碼驗證**: 整合 AST 靜態分析，確保生成的工具符合安全與行數規範。
+- **GitOps PR 工作流**: 自動建立 GitHub Branch 並發起 PR，實現人類在環 (Human-in-the-loop) 的代碼審核。
 
 ## 📁 目錄結構
 
@@ -16,12 +16,14 @@
 my-assistant/
 ├── src/
 │   ├── core/          # 標準化事件與介面定義
-│   ├── perception/    # 感知層 (FastAPI, Telegram Bot, Gateway)
+│   ├── perception/    # 感知層 (FastAPI, Gateway)
 │   ├── brain/         # 大腦層 (Router, Orchestrator, Prompts)
-│   ├── memory/        # 記憶層 (Session Manager, Compression)
-│   └── tools/         # 工具層 (Registry, Base Classes)
-├── examples/          # 原始 SDK 使用範例
-└── pyproject.toml     # 專案依賴管理
+│   ├── memory/        # 記憶層 (Session Manager)
+│   └── tools/         # 工具層
+│       ├── static/    # 靜態/元工具 (Reload, Create, Inspect, SubmitPR)
+│       └── dynamic/   # AI 自動生成的工具 (持久化於 Volume)
+├── pyproject.toml     # 專案依賴管理
+└── storage/           # Session 與記憶持久化區
 ```
 
 ## 🚀 快速開始
@@ -35,75 +37,60 @@ cp .env.example .env
 ```
 
 必填變數：
-- `COPILOT_GITHUB_TOKEN`: 用於 GitHub Copilot SDK。
-- `TELEGRAM_BOT_TOKEN`: 用於 Telegram Bot 控制（選填）。
+- `COPILOT_GITHUB_TOKEN`: GitHub Token (需具備 `repo` 權限以支援 PR 功能)。
+- `GITHUB_REPO_NAME`: 持久化與 PR 的目標儲存庫 (格式: `owner/repo`)。
+- `TELEGRAM_BOT_TOKEN`: 用於啟動 Telegram Bot (選填，若設定則自動啟動)。
 
 ### 2. 安裝
 
-```bash
-pip install -e .
-```
+本專案支援 Docker 部署與本機開發。
 
-### 3. 啟動服務 (本機開發優先)
-為了快速迭代，建議優先在本機執行：
+#### 方法 A：Docker (推薦)
 
 ```bash
-# 啟動 API 伺服器
-python -m src.main
+docker-compose up --build
 ```
 
-### 4. Docker 驗證
-本機測試完成後，使用 Docker 驗證建置與持久化：
+#### 方法 B：本機開發 (Local Development)
 
-```bash
-docker compose up --build -d
-```
+若要進行開發或除錯，建議使用虛擬環境：
 
-### 5. 測試與驗證
+1. **建立並啟用虛擬環境**:
+   
+   Windows:
+   ```powershell
+   python -m venv venv
+   .\venv\Scripts\activate
+   ```
 
-#### Session 持久化驗證
-系統目前支援自動持久化 Session 狀態至 `./storage`。
+   Linux/macOS:
+   ```bash
+   python -m venv venv
+   source venv/bin/activate
+   ```
 
-1. **初始對話**：傳送包含個人資訊的訊息。
-2. **重啟**：關閉並重啟伺服器。
-3. **恢復**：使用相同 `session_id` 詢問先前提供的資訊，確認 Agent 是否保留記憶。
+2. **安裝依賴**:
+   ```bash
+   pip install -e .
+   ```
 
-#### 使用 PowerShell 測試範例
+3. **啟動服務**:
+   ```bash
+   # 務必使用 module 方式啟動，否則會遇到 Import Error
+   python -m src.main
+   ```
 
-#### A. 使用 WSL (Ubuntu) 或 Linux 終端機
-```bash
-# 檢查健康狀態
-curl http://localhost:8000/health
+### 3. 常見問題 (Troubleshooting)
 
-# 進行對話測試
-curl -X POST http://localhost:8000/chat \
-  -H "Content-Type: application/json" \
-  -d '{"content": "請幫我寫一個 Python 的費式數列函式", "session_id": "user_123"}'
-```
+- **Failed to list models (400)**: 代表 `COPILOT_GITHUB_TOKEN` 無效、過期或權限不足。請重新生成 Token 並確保勾選 `repo` 與 `Copilot` 相關權限（若有）。
+- **ModuleNotFoundError: No module named 'src'**: 請確認您是在專案根目錄執行，且使用 `python -m src.main` 而非 `python src/main.py`。
 
-#### B. 使用 Windows PowerShell
-由於 PowerShell 的 `curl` 與標準不同，請使用以下指令：
+## 🛠️ 自我進化工作流 (Evolution Flow)
 
-```powershell
-# 檢查健康狀態
-Invoke-RestMethod -Uri http://localhost:8000/health
-
-# 進行對話測試
-$body = @{
-    content = "你好，請寫一個 Python Hello World"
-    session_id = "test_user"
-} | ConvertTo-Json -Compress
-
-Invoke-RestMethod -Method Post -Uri http://localhost:8000/chat -ContentType "application/json" -Body $body
-```
-
-## 🛠️ 開發與擴充
-
-### 註冊新工具
-在 `src/tools/` 下繼承 `BaseTool` 並在 `main.py` 的 `tool_registry` 中註冊即可讓 AI 使用。
-
-### 調整重生策略
-修改 `src/config.py` 中的 `SESSION_MAX_TURNS` 來決定幾輪後觸發 Session 重生。
+1. **偵測缺失**: 模型發現無法完成任務。
+2. **自動開發**: 模型呼叫 `create_tool` 寫入程式碼（經 AST 驗證）。
+3. **熱重載**: 模型呼叫 `reload_tools` 啟動新功能。
+4. **回饋碼庫**: 模型呼叫 `submit_tool_pr` 提交 PR 給人類審核。
 
 ---
 Developed with ❤️ for AI Agent research.
