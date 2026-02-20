@@ -64,7 +64,13 @@ class SessionManager:
     async def get_or_create(self, session_id: str, route_config: RouteConfig, tools: Optional[list] = None) -> SessionWrapper:
         # Load persistent mapping to find the actual SDK UUID
         mapping = self._load_mapping()
-        sdk_session_id = mapping.get(session_id)
+        
+        # 為了支援 Sub-agent，同一個聊天室 (session_id) 會有不同的 Role
+        # 我們必須將不同的 Role 對應到不同的 SDK Session，避免 API Tools 衝突
+        role_id = route_config.role.role_id if route_config.role else "default"
+        namespaced_session_id = f"{session_id}_{role_id}"
+        
+        sdk_session_id = mapping.get(namespaced_session_id)
 
         # 1. Try to Resume or Sync existing
         config_dir = str(self.storage_path)
@@ -99,9 +105,9 @@ class SessionManager:
                 err_msg = str(e)
                 if "Session not found" in err_msg:
                     print(f"Session UUID {sdk_session_id} not found on server, will create a new one.")
-                elif session_id in self._sessions:
+                elif namespaced_session_id in self._sessions:
                      print(f"Resume context failed, falling back to cached session: {e}")
-                     return self._sessions[session_id]
+                     return self._sessions[namespaced_session_id]
                 else:
                      print(f"Resume failed: {e}")
         else:
@@ -123,12 +129,12 @@ class SessionManager:
             sdk_session = await self.client.create_session(session_config)
             
             # Save the new mapping
-            mapping[session_id] = sdk_session.session_id
+            mapping[namespaced_session_id] = sdk_session.session_id
             self._save_mapping(mapping)
-            print(f"Mapped {session_id} -> UUID {sdk_session.session_id}")
+            print(f"Mapped {namespaced_session_id} -> UUID {sdk_session.session_id}")
 
             wrapper = SessionWrapper(session_id, sdk_session)
-            self._sessions[session_id] = wrapper
+            self._sessions[namespaced_session_id] = wrapper
             return wrapper
         except Exception as e:
             print(f"Failed to create session: {e}")

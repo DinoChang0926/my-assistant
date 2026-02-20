@@ -14,26 +14,28 @@ class AgentRole:
 class RoleRegistry:
     """Registry for pre-defined Agent Roles."""
     
-    # Pre-defined Roles
     SUPERVISOR = AgentRole(
         role_id="supervisor",
         description="Friendly general assistant, preserves model's native persona.",
         system_prompt=GENERAL_SYSTEM_PROMPT,
-        temperature=0.7
+        temperature=0.7,
+        allowed_tools=["web_search", "url_fetcher", "local_memory"]
     )
     
     CODER_GENERAL = AgentRole(
         role_id="coder_general",
         description="Software engineer, trusts model's native coding ability.",
         system_prompt=None,
-        temperature=0.2
+        temperature=0.2,
+        allowed_tools=["inspect_tool", "web_search", "url_fetcher"]
     )
     
     ARCHITECT_STRICT = AgentRole(
         role_id="architect_strict",
         description="Strict system architect. No coding allowed. Output Mermaid or Directory structures.",
         system_prompt="你是一個嚴格的系統架構師。禁止撰寫具體程式碼。你只能輸出 Mermaid 圖表、系統目錄結構樹或架構設計文件。若使用者要求寫程式，請禮貌地拒絕並建議將任務轉交給工程師。",
-        temperature=0.2
+        temperature=0.2,
+        allowed_tools=["inspect_tool"]
     )
     
     EVOLUTION_MECHANIC = AgentRole(
@@ -45,7 +47,8 @@ class RoleRegistry:
             "若需執行系統操作、發信、或任何環境互動，你 **必須** 使用 `create_tool` 將邏輯封裝為 Python Class 工具。\n"
             "禁止在回覆中建議使用者執行 shell 指令。"
         ),
-        temperature=0.1
+        temperature=0.1,
+        allowed_tools=["create_tool", "inspect_tool", "reload_tools", "web_search"]
     )
 
     @classmethod

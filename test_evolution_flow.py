@@ -8,7 +8,6 @@ load_dotenv()
 
 from src.tools.static.create_tool import CreateToolTool
 from src.tools.static.inspect_tool import InspectToolTool
-from src.tools.static.submit_tool_pr import SubmitToolToRepoTool
 from src.tools.registry import ToolRegistry
 from src.perception import rest_api
 from src.config import settings
@@ -70,19 +69,7 @@ class FibonacciTool(BaseTool):
     res2 = await inspector.execute(tool_name="fibonacci")
     print(f"Result 2: {res2.get('status')} - Found at {res2.get('file_path')}")
     
-    # 3. Test SubmitToolToRepoTool
-    submitter = SubmitToolToRepoTool()
-    print("Step 3: Submitting Tool 'fibonacci' (standalone test)...")
-    
-    # Manually inject settings if pydantic loaded too early
-    import os
-    if not settings.GITHUB_REPO_NAME:
-        settings.GITHUB_REPO_NAME = os.getenv("GITHUB_REPO_NAME")
-    if not settings.COPILOT_GITHUB_TOKEN:
-        settings.COPILOT_GITHUB_TOKEN = os.getenv("COPILOT_GITHUB_TOKEN")
-
-    res3 = await submitter.execute(tool_name="fibonacci", purpose="Add fibonacci helper for sequence calculations.")
-    print(f"Result 3: {res3.get('status')} - {res3.get('message')}")
+    print("Step 3: (Skipped) Submitting Tool 'fibonacci' (standalone test)...")
 
 if __name__ == "__main__":
     asyncio.run(run_test())

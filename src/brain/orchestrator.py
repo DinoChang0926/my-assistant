@@ -25,11 +25,11 @@ class TaskOrchestrator:
         sdk_tools = []
         base_tools = list(self.tool_registry._tools.values())
         
-        # Filter tools if specific allowed_tools are defined for the role
+        # Filter tools based on Sub-agent Role definition
         if route_config.role and route_config.role.allowed_tools:
             allowed_names = set(route_config.role.allowed_tools)
             base_tools = [t for t in base_tools if t.name in allowed_names]
-            print(f"[Orchestrator] Filtering tools for role '{route_config.role.role_id}': {allowed_names}")
+            print(f"[Orchestrator] Filtering tools for Sub-agent role '{route_config.role.role_id}': {allowed_names}")
         
         # We need to import these locally to avoid circular imports or early import issues
         from copilot.types import Tool, ToolInvocation, ToolResult
@@ -45,9 +45,14 @@ class TaskOrchestrator:
                         
                         result_data = await t_instance.execute(**args)
                         
+                        result_str = str(result_data)
+                        MAX_LENGTH = 10000
+                        if len(result_str) > MAX_LENGTH:
+                            result_str = result_str[:MAX_LENGTH] + "\n...(truncated due to length limits)"
+                            
                         return {
                             "resultType": "success",
-                            "textResultForLlm": str(result_data)
+                            "textResultForLlm": result_str
                         }
                     except Exception as e:
                         import traceback
