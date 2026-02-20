@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict
-from ..core.interfaces import AbstractTool
+from src.core.interfaces import AbstractTool
 
 class BaseTool(AbstractTool, ABC):
     """Base class for all tools."""

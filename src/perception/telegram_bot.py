@@ -4,9 +4,9 @@ import uuid
 from typing import Optional
 from telegram import Update
 from telegram.ext import Application, ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
-from ..config import settings
-from ..core.events import AgentEvent, InputSource
-from ..perception.gateway import UnifiedGateway
+from src.config import settings
+from src.core.events import AgentEvent, InputSource
+from src.perception.gateway import UnifiedGateway
 
 logger = logging.getLogger(__name__)
 
@@ -89,12 +89,19 @@ class TelegramBot:
             content=user_text
         )
         
+        # Provide real-time status updates via callback
+        async def send_status(msg: str):
+            try:
+                await context.bot.send_message(chat_id=chat_id, text=msg)
+            except Exception as e:
+                logger.error(f"Error sending status update: {e}")
+
         # Send to Gateway
         try:
             # Show "typing..." status
             await context.bot.send_chat_action(chat_id=chat_id, action="typing")
             
-            response = await self.gateway.process(event)
+            response = await self.gateway.process(event, status_callback=send_status)
             
             # Reply to user
             await update.message.reply_text(response.content)

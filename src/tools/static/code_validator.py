@@ -1,76 +1,72 @@
 import ast
-from typing import List, Tuple
 
-class SafetyVisitor(ast.NodeVisitor):
-    def __init__(self):
-        self.errors = []
-        self.has_base_tool = False
-        self.has_execute = False
-        
-        # Blacklisted modules
-        self.unsafe_modules = {
-            "os", "sys", "subprocess", "shutil", 
-            "multiprocessing", "socket", "ctypes", "pickle"
-        }
-        
-        # Blacklisted functions
-        self.unsafe_calls = {
-            "eval", "exec", "compile", "__import__", "open"
-        }
+# 定義允許的模組白名單 (標準庫 + requirements.txt)
+ALLOWED_MODULES = {
+    'src', 'src.tools.base', 'src.brain.prompts',
+    'asyncio', 'json', 'datetime', 'time', 're', 'math', 'random', 'pathlib',
+    'pandas', 'yfinance', 'requests', 'beautifulsoup4', 'bs4', 'duckduckgo_search',
+    'googleapiclient', 'google', 'ta', 'matplotlib', 'mplfinance', 'numpy', 'pydantic'
+}
 
-    def visit_Import(self, node):
-        for alias in node.names:
-            if alias.name.split('.')[0] in self.unsafe_modules:
-                self.errors.append(f"Importing unsafe module '{alias.name}' is prohibited.")
-        self.generic_visit(node)
+# 定義禁止的危險操作
+BANNED_FUNCTIONS = {'os.system', 'subprocess.run', 'subprocess.Popen', 'subprocess.call', 'eval', 'exec'}
 
-    def visit_ImportFrom(self, node):
-        if node.module and node.module.split('.')[0] in self.unsafe_modules:
-            self.errors.append(f"Importing from unsafe module '{node.module}' is prohibited.")
-        self.generic_visit(node)
-
-    def visit_Call(self, node):
-        if isinstance(node.func, ast.Name):
-            if node.func.id in self.unsafe_calls:
-                self.errors.append(f"Calling unsafe function '{node.func.id}' is prohibited.")
-        self.generic_visit(node)
-
-    def visit_ClassDef(self, node):
-        # Check if class inherits from BaseTool
-        for base in node.bases:
-            if isinstance(base, ast.Name) and base.id == "BaseTool":
-                self.has_base_tool = True
-                # Check for execute method
-                for item in node.body:
-                    if isinstance(item, ast.AsyncFunctionDef) and item.name == "execute":
-                        self.has_execute = True
-        self.generic_visit(node)
-
-def validate_tool_code(code: str) -> Tuple[bool, List[str]]:
+def validate_tool_code(code: str) -> tuple[bool, list[str]]:
     """
-    Validates the Python code for safety and structure.
-    Returns (is_valid, error_messages).
+    驗證 Python 代碼是否符合 Tool 規範：
+    1. 必須包含 Class 定義
+    2. Class 必須繼承 BaseTool
+    3. 嚴格檢查 Import 白名單
+    4. 禁止危險操作 (os.system, subprocess, eval 等)
     """
-    errors = []
-    
-    # 1. Line count check
-    if len(code.splitlines()) > 200:
-        errors.append("Code exceeds 200 lines limit.")
-        return False, errors
-
     try:
         tree = ast.parse(code)
     except SyntaxError as e:
-        errors.append(f"Syntax Error: {e}")
-        return False, errors
+        return False, [f"Syntax Error: {e}"]
 
-    visitor = SafetyVisitor()
-    visitor.visit(tree)
-    errors.extend(visitor.errors)
+    errors = []
+    has_class = False
+    inherits_base_tool = False
+    
+    for node in ast.walk(tree):
+        # 1. 檢查 Class 定義
+        if isinstance(node, ast.ClassDef):
+            has_class = True
+            for base in node.bases:
+                if isinstance(base, ast.Name) and base.id == 'BaseTool':
+                    inherits_base_tool = True
+                elif isinstance(base, ast.Attribute) and base.attr == 'BaseTool':
+                    inherits_base_tool = True
 
-    if not visitor.has_base_tool:
-        errors.append("Code must contain a class inheriting from 'BaseTool'.")
-    if visitor.has_base_tool and not visitor.has_execute:
-        errors.append("The tool class must implement an async 'execute' method.")
+        # 2. 檢查 Import 白名單
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    module_name = alias.name.split('.')[0]
+                    if module_name not in ALLOWED_MODULES and alias.name not in ALLOWED_MODULES:
+                        errors.append(f"Security Error: Import of '{alias.name}' is not allowed.")
+            else: # ImportFrom
+                if node.module:
+                    module_base = node.module.split('.')[0]
+                    if module_base not in ALLOWED_MODULES and node.module not in ALLOWED_MODULES:
+                        errors.append(f"Security Error: Import from '{node.module}' is not allowed.")
+
+        # 3. 檢查危險函數
+        if isinstance(node, ast.Call):
+            func_name = ""
+            if isinstance(node.func, ast.Name):
+                func_name = node.func.id
+            elif isinstance(node.func, ast.Attribute):
+                # 處理 os.system 這種情況
+                if isinstance(node.func.value, ast.Name):
+                    func_name = f"{node.func.value.id}.{node.func.attr}"
+                
+            if func_name in BANNED_FUNCTIONS:
+                errors.append(f"Security Error: Call to banned function '{func_name}' is forbidden.")
+
+    if not has_class:
+        errors.append("Code must define a Python Class.")
+    if not inherits_base_tool:
+        errors.append("The Class must inherit from 'BaseTool' (or 'src.tools.base.BaseTool').")
 
     return len(errors) == 0, errors

@@ -6,14 +6,14 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from copilot import CopilotClient
 
-from .config import settings
-from .memory.manager import SessionManager
-from .brain.router import IntentClassifier
-from .brain.orchestrator import TaskOrchestrator
-from .tools.registry import ToolRegistry
-from .perception.gateway import UnifiedGateway
-from .perception import rest_api
-from .perception.telegram_bot import TelegramBot
+from src.config import settings
+from src.memory.manager import SessionManager
+from src.brain.router import IntentClassifier
+from src.brain.orchestrator import TaskOrchestrator
+from src.tools.registry import ToolRegistry
+from src.perception.gateway import UnifiedGateway
+from src.perception import rest_api
+from src.perception.telegram_bot import TelegramBot
 import asyncio
 
 # Define lifespan context manager
@@ -34,8 +34,22 @@ async def lifespan(app: FastAPI):
     try:
         session_manager = SessionManager(client)
         
-        # Initialize Registry and Load Tools
+        # Initialize Registry
         tool_registry = ToolRegistry()
+        
+        # Initialize Meta-Tools with Dependency Injection
+        from .tools.static.create_tool import CreateToolTool
+        from .tools.static.reload_tools import ReloadToolsTool
+        
+        create_tool_instance = CreateToolTool(registry=tool_registry)
+        reload_tools_instance = ReloadToolsTool(registry=tool_registry)
+        
+        # Manually register DI tools
+        tool_registry.register(create_tool_instance)
+        tool_registry.register(reload_tools_instance)
+        print(f"[System] Registered Meta-Skills with DI: {create_tool_instance.name}, {reload_tools_instance.name}")
+        
+        # Load other static and dynamic tools
         tool_registry.load_static_tools()
         tool_registry.load_dynamic_tools()
         

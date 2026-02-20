@@ -6,7 +6,7 @@ import asyncio
 import logging
 from typing import Dict, List
 from pathlib import Path
-from .base import BaseTool
+from src.tools.base import BaseTool
 
 logger = logging.getLogger(__name__)
 
@@ -67,8 +67,17 @@ class ToolRegistry:
                     for name, obj in vars(module).items():
                         if isinstance(obj, type) and issubclass(obj, BaseTool) and obj is not BaseTool:
                             try:
+                                # We need to check if an instance already exists to avoid overwriting DI-injected tools
+                                # But we need the name first. We can inspect the class or try dummy instantiate.
+                                # Since we use BaseTool subclasses, they usually have 'name' as a property.
+                                temp_tool = obj.__new__(obj)
+                                tool_name = getattr(temp_tool, "name", None)
+                                
+                                if tool_name and tool_name in self._tools:
+                                    print(f"Tool '{tool_name}' already registered (likely via DI), skipping auto-load from {f.name}")
+                                    continue
+
                                 tool_instance = obj()
-                                # Optional: Verify tool name matches expected pattern?
                                 self.register(tool_instance)
                                 loaded_count += 1
                             except Exception as e:

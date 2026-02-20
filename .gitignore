@@ -22,3 +22,6 @@ logs_full_*.txt
 # OS
 .DS_Store
 Thumbs.db
+.env copy
+.env.test
+examples/

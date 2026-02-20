@@ -1,14 +1,17 @@
 from abc import ABC, abstractmethod
 from typing import List, Optional, Any
 from dataclasses import dataclass
-from .events import AgentEvent, AgentResponse
+from src.core.events import AgentEvent, AgentResponse
+
+from src.core.roles import AgentRole
 
 @dataclass
 class RouteConfig:
     """Configuration for LLM routing."""
     model_name: str
-    system_prompt: str
+    system_prompt: str  # Kept for backward compatibility or direct overrides
     intent: str
+    role: Optional[AgentRole] = None
 
 class AbstractRouter(ABC):
     @abstractmethod

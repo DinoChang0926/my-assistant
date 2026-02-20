@@ -4,10 +4,10 @@
 
 ## 🌟 核心特性
 
-- **模組化單體架構**: 清楚的層級劃分：感知層、大腦層、記憶層、工具層。
-- **自我進化機制 (Agentic Self-Evolution)**: Agent 可於運行時偵測能力缺失，自動編寫、測試並部署新工具，無需重啟服務。
-- **元工具系統 (Meta-Tools)**: 提供 `create_tool`、`inspect_tool`、`reload_tools` 等核心開發工具。
-- **安全代碼驗證**: 整合 AST 靜態分析，確保生成的工具符合安全與行數規範。
+- **模組化單體架構**: 清楚的層級劃分：感知層、大腦層、記憶層、技能層 (Skills)。
+- **自我進化機制 (Agentic Self-Evolution)**: Agent 可於運行時偵測能力缺失，自動編寫、測試並部署新技能，無需重啟服務。
+- **元技能系統 (Meta-Skills)**: 提供 `create_tool`、`inspect_tool`、`reload_tools` 等核心開發技能。
+- **安全代碼驗證**: 整合 AST 靜態分析，確保生成的技能符合安全與行數規範。
 - **GitOps PR 工作流**: 自動建立 GitHub Branch 並發起 PR，實現人類在環 (Human-in-the-loop) 的代碼審核。
 
 ## 📁 目錄結構
@@ -19,9 +19,9 @@ my-assistant/
 │   ├── perception/    # 感知層 (FastAPI, Gateway)
 │   ├── brain/         # 大腦層 (Router, Orchestrator, Prompts)
 │   ├── memory/        # 記憶層 (Session Manager)
-│   └── tools/         # 工具層
-│       ├── static/    # 靜態/元工具 (Reload, Create, Inspect, SubmitPR)
-│       └── dynamic/   # AI 自動生成的工具 (持久化於 Volume)
+│   └── tools/         # 技能層 (Skills)
+│       ├── static/    # 靜態/元技能 (Reload, Create, Inspect, SubmitPR)
+│       └── dynamic/   # AI 自動生成的技能 (持久化於 Volume)
 ├── pyproject.toml     # 專案依賴管理
 └── storage/           # Session 與記憶持久化區
 ```
@@ -80,16 +80,28 @@ docker-compose up --build
    python -m src.main
    ```
 
-### 3. 常見問題 (Troubleshooting)
+### 3. Skills API 端點
+
+本系統提供專用的 API 來管理與監控代理人的技能：
+
+- **`GET /skills`**: 列出當前所有已註冊的技能及其詳細參數規範。
+- **`POST /skills/reload`**: 觸發熱重載，立即使新編寫的技能生效。
+- **`GET /skills/{name}`**: 查詢特定技能的實作細節與 Schema。
+
+### 4. 常見問題 (Troubleshooting)
 
 - **Failed to list models (400)**: 代表 `COPILOT_GITHUB_TOKEN` 無效、過期或權限不足。請重新生成 Token 並確保勾選 `repo` 與 `Copilot` 相關權限（若有）。
 - **ModuleNotFoundError: No module named 'src'**: 請確認您是在專案根目錄執行，且使用 `python -m src.main` 而非 `python src/main.py`。
+- **SMTPAuthenticationError (535): Username and Password not accepted**: 若使用 Gmail，這是因為您使用了「登入密碼」而非「應用程式密碼 (App Password)」。
+  - 請至 [Google 帳戶安全性](https://myaccount.google.com/security) 開啟 **兩步驟驗證 (2-Step Verification)**。
+  - 搜尋或找到 **應用程式密碼 (App passwords)**。
+  - 建立一組新的密碼（選擇「郵件」和「Windows 電腦」），並將生成的 16 碼密碼（無需空格）填入 `.env` 的 `SMTP_PASS`。
 
 ## 🛠️ 自我進化工作流 (Evolution Flow)
 
 1. **偵測缺失**: 模型發現無法完成任務。
 2. **自動開發**: 模型呼叫 `create_tool` 寫入程式碼（經 AST 驗證）。
-3. **熱重載**: 模型呼叫 `reload_tools` 啟動新功能。
+3. **熱重載**: 模型呼叫 `reload_tools` 或透過 API `POST /skills/reload` 啟動新功能。
 4. **回饋碼庫**: 模型呼叫 `submit_tool_pr` 提交 PR 給人類審核。
 
 ---

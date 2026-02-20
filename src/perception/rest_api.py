@@ -1,8 +1,8 @@
 from fastapi import FastAPI, HTTPException
 from typing import Optional
 from pydantic import BaseModel
-from ..core.events import AgentEvent, InputSource, AgentResponse
-from .gateway import UnifiedGateway
+from src.core.events import AgentEvent, InputSource, AgentResponse
+from src.perception.gateway import UnifiedGateway
 import uuid
 
 app = FastAPI(title="AI Agent API")
@@ -35,19 +35,45 @@ async def chat(request: ChatRequest):
     response = await gateway.process(event)
     return response
 
-# System Management Endpoints
-@app.post("/system/tools/refresh")
-async def refresh_tools():
+# Skills (Tools) Management Endpoints
+@app.get("/skills")
+async def list_skills():
+    """List all available tools/skills with metadata."""
+    if tool_registry is None:
+        raise HTTPException(status_code=503, detail="ToolRegistry not initialized")
+    
+    # Return full schema for each tool to provide "how to use" info
+    return {
+        "total": len(tool_registry._tools),
+        "skills": tool_registry.get_all_schemas()
+    }
+
+@app.post("/skills/reload")
+async def reload_skills():
+    """Trigger a hot-reload of all static and dynamic tools."""
     if tool_registry is None:
         raise HTTPException(status_code=503, detail="ToolRegistry not initialized")
     result = await tool_registry.refresh()
-    return result
+    return {
+        "status": "success",
+        "message": "Skills reloaded successfully",
+        "data": result
+    }
 
-@app.get("/system/tools")
-async def list_tools():
+@app.get("/skills/{name}")
+async def get_skill_details(name: str):
+    """Get detailed schema for a specific skill."""
     if tool_registry is None:
         raise HTTPException(status_code=503, detail="ToolRegistry not initialized")
-    return {"tools": tool_registry.list_tools()}
+    tool = tool_registry.get_tool(name)
+    if not tool:
+        raise HTTPException(status_code=404, detail=f"Skill '{name}' not found")
+    return tool.to_schema()
+
+# Legacy Endpoints (Optional: Keep for backward compatibility or deprecate)
+@app.post("/system/tools/refresh")
+async def refresh_tools():
+    return await reload_skills()
 
 def set_gateway(g: UnifiedGateway):
     global gateway

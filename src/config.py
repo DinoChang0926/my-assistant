@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     COPILOT_GITHUB_TOKEN: str
     COPILOT_MODEL: str = "claude-3.5-sonnet"
     COPILOT_EVOLUTION_MODEL: str = "claude-3.5-sonnet" # Model specifically for self-evolution tasks
+    COPILOT_MAX_TOKENS: int = 4096
     GITHUB_REPO_NAME: Optional[str] = None # e.g. "owner/repo"
 
     # Telegram Bot
@@ -23,6 +24,13 @@ class Settings(BaseSettings):
     SESSION_MAX_TURNS: int = 10
     SESSION_TIMEOUT_MINUTES: int = 30
     SESSION_STORAGE_PATH: str = "storage"
+
+    # SMTP Configuration
+    SMTP_HOST: Optional[str] = None
+    SMTP_PORT: int = 587
+    SMTP_USER: Optional[str] = None
+    SMTP_PASS: Optional[str] = None
+    SMTP_FROM: Optional[str] = None
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -4,20 +4,20 @@ import asyncio
 from pathlib import Path
 from src.tools.base import BaseTool
 from src.tools.static.code_validator import validate_tool_code
-from src.perception import rest_api
 
 class CreateToolTool(BaseTool):
     """
     A tool that allows the Agent to create new tool Python files.
-    Includes comprehensive safety validation and dependency management.
+    Includes comprehensive safety validation.
     """
 
-    def __init__(self):
+    def __init__(self, registry=None):
+        """
+        Args:
+            registry: ToolRegistry instance (Dependency Injection)
+        """
+        self.registry = registry
         self._lock = asyncio.Lock()
-        self.allowed_dependencies = {
-            "requests", "httpx", "numpy", "beautifulsoup4", "bs4",
-            "lxml", "pyyaml", "python-dateutil", "pandas" 
-        }
 
     @property
     def name(self) -> str:
@@ -25,7 +25,7 @@ class CreateToolTool(BaseTool):
 
     @property
     def description(self) -> str:
-        return "建立新的 Python 工具。會自動進行安全檢查、安裝依賴，並觸發工具重載。請盡量使用標準庫。"
+        return "建立新的 Python 技能。目前僅限使用預裝庫 (pandas, yfinance, requests 等)。會自動進行安全檢查並熱重載。"
 
     @property
     def parameters(self) -> dict:
@@ -34,16 +34,11 @@ class CreateToolTool(BaseTool):
             "properties": {
                 "tool_name": {
                     "type": "string",
-                    "description": "工具名稱 (e.g., 'crypto_price_checker'). 建議使用蛇形命名。"
+                    "description": "技能名稱 (e.g., 'crypto_price_checker')。"
                 },
                 "code_content": {
                     "type": "string",
-                    "description": "完整的 Python 程式碼 (應繼承 BaseTool)."
-                },
-                "dependencies": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "需要安裝的 pip 套件清單 (僅限白名單內套件)."
+                    "description": "完整的 Python 程式碼 (應繼承 BaseTool)。禁止使用 subprocess 或未安裝的庫。"
                 }
             },
             "required": ["tool_name", "code_content"]
@@ -52,38 +47,25 @@ class CreateToolTool(BaseTool):
     async def execute(self, **kwargs) -> dict:
         tool_name = kwargs.get("tool_name")
         code_content = kwargs.get("code_content")
-        dependencies = kwargs.get("dependencies", [])
 
         if not tool_name or not code_content:
             return {"status": "error", "message": "Missing tool_name or code_content."}
 
+        # 1. Validate Code (Security check: Whitelist imports, Banned functions)
         is_valid, errors = validate_tool_code(code_content)
         if not is_valid:
             error_msg = "; ".join(errors)
             return {"status": "error", "message": f"Validation Failed: {error_msg}"}
 
-        if dependencies:
-            invalid_deps = [dep for dep in dependencies if dep not in self.allowed_dependencies]
-            if invalid_deps:
-                return {
-                    "status": "error", 
-                    "message": f"Security Error: Dependencies not in whitelist: {invalid_deps}"
-                }
-            
-            try:
-                subprocess.check_call(
-                    [sys.executable, "-m", "pip", "install"] + dependencies
-                )
-            except subprocess.CalledProcessError as e:
-                return {"status": "error", "message": f"Dependency installation failed: {e}"}
-
+        # 2. Write File
         safe_name = tool_name.replace(" ", "_").lower()
         if not safe_name.startswith("dynamic_tool_"):
             filename = f"dynamic_tool_{safe_name}.py"
         else:
             filename = f"{safe_name}.py"
 
-        base_dir = Path(__file__).parent.parent / "dynamic"
+        # 定位到 src/tools/dynamic
+        base_dir = Path(__file__).resolve().parent.parent / "dynamic"
         file_path = base_dir / filename
         
         async with self._lock:
@@ -94,12 +76,18 @@ class CreateToolTool(BaseTool):
             except Exception as e:
                 return {"status": "error", "message": f"File write failed: {e}"}
 
-        if rest_api.tool_registry:
-            refresh_result = await rest_api.tool_registry.refresh()
+        # 3. Trigger Reload
+        if not self.registry:
+            return {
+                "status": "warning", 
+                "message": f"Skill '{tool_name}' created but registry was not injected."
+            }
+
+        try:
+            refresh_result = await self.registry.refresh() 
             return {
                 "status": "success",
-                "message": f"Tool '{tool_name}' created and loaded successfully. File: {filename}",
-                "refresh_result": refresh_result
+                "message": f"Skill '{tool_name}' created and loaded. Total tools: {refresh_result.get('tool_count')}"
             }
-        else:
-             return {"status": "warning", "message": f"Tool '{tool_name}' created but registry refresh failed."}
+        except Exception as e:
+             return {"status": "warning", "message": f"Skill '{tool_name}' created but reload failed: {e}"}

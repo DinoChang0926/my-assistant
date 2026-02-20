@@ -1,0 +1,23 @@
+fastapi
+uvicorn[standard]
+python-dotenv
+python-telegram-bot
+pydantic
+pydantic-settings
+github-copilot-sdk
+PyGithub
+# --- 網路與搜尋 ---
+requests
+beautifulsoup4
+duckduckgo-search
+# --- Google 服務 ---
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
+# --- 金融分析 ---
+yfinance
+pandas
+numpy
+ta
+matplotlib
+mplfinance
