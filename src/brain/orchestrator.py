@@ -73,16 +73,19 @@ class TaskOrchestrator:
         if not skill_list_str:
             skill_list_str = "(No unlocked skills available, please use create_tool to create one)"
 
-        # 追加嚴格指令，禁止輸出思考過程
-        strict_instruction = "\n\n[CRITICAL]: 當你需要呼叫工具 (Tool) 時，請「直接」呼叫工具，絕對不要在訊息中輸出你的思考過程 (Chain of Thought)、自我解釋或英文的抓取動作描述 (如 'Fetching...', 'Let me check...' 等)。只需要把最終結論告訴使用者即可。"
+        # 追加嚴格指令，禁止輸出思考過程與冗餘解釋
+        strict_instruction = (
+            "\n\n[CRITICAL]: 當你需要呼叫工具 (例如 local_memory) 時，請「直接」呼叫工具，絕對不要在訊息中輸出你的思考過程 (Chain of Thought)、"
+            "自我解釋、或是諸如「將從本機記憶讀取...」、「將把XXX儲存...」的預告動作說明。請默默地在背景使用工具，處理完畢後直接給使用者最終、精簡、自然的對話回應即可。"
+        )
 
         current_prompt = route_config.system_prompt
         if current_prompt:
             if "{skill_list}" in current_prompt:
                  route_config.system_prompt = current_prompt.replace("{skill_list}", skill_list_str) + strict_instruction
-            elif "### Current Skills:" not in current_prompt:
-                # Fallback: specific injection or just append if not found
-                route_config.system_prompt = current_prompt + f"\n\n### Current Skills:\n{skill_list_str}" + strict_instruction
+            else:
+                 # Inject skill list and strict instructions if not explicitly placed
+                 route_config.system_prompt = current_prompt + f"\n\n### Current Skills:\n{skill_list_str}" + strict_instruction
         else:
             # Native Behavior: Do not inject skill list text, rely on SDK tools definition
             route_config.system_prompt = strict_instruction
@@ -104,9 +107,10 @@ class TaskOrchestrator:
             print(f"Captured event: {e_type}")
             
             if e_type == "assistant.message":
-                # Some versions of Copilot SDK or LLMs prepend thought blocks.
-                # We accumulate here, we will clean it at the end.
-                turn_data["assistant_message"] += event_obj.data.content
+                # Depending on SDK streaming behavior, 'content' might be a delta or the full accumulated text.
+                # In standard mode without streaming explicitly requested, it usually fires multiple times with the full text so far.
+                # We overwrite instead of append to prevent duplication.
+                turn_data["assistant_message"] = event_obj.data.content
                 print(f"Assistant message received: {event_obj.data.content[:50]}...")
             elif e_type == "tool.execution_start":
                 turn_data["tools_used"].append({
@@ -115,7 +119,7 @@ class TaskOrchestrator:
                     "status": "running"
                 })
                 print(f"Tool execution started by SDK: {event_obj.data.tool_name}")
-                if status_callback:
+                if status_callback and event_obj.data.tool_name not in ["report_intent", "local_memory"]:
                     asyncio.create_task(status_callback(f"⚙️ 正在使用技能: {event_obj.data.tool_name}..."))
             elif e_type == "tool.execution_complete":
                 # Find matching tool call and update status
@@ -137,8 +141,33 @@ class TaskOrchestrator:
 
         unsubscribe = session.on(handle_event)
         
-        # 4. Send message
-        await session.send(MessageOptions(prompt=event.content))
+        # 4. Read local memory for Context Injection
+        import json
+        import os
+        from src.config import settings
+
+        memory_context = ""
+        memory_file = os.path.join(settings.SESSION_STORAGE_PATH, "local_memory.json")
+        try:
+            if os.path.exists(memory_file):
+                with open(memory_file, 'r', encoding='utf-8') as f:
+                    memory_data = json.load(f)
+                    if memory_data:
+                        memory_context = "\n\n### [專屬本機記憶 local_memory.json (請將此視為使用者的背景資訊)]:\n"
+                        for k, v in memory_data.items():
+                            memory_context += f"- {k}: {v}\n"
+        except Exception as e:
+            print(f"[Orchestrator] Error reading local memory: {e}")
+
+        # 5. Send message with injected prompt and context to bypass SDK overrides
+        # We prepend our carefully crafted system prompt and the loaded memory context
+        # directly into the user's message, wrapped in a system block.
+        if route_config.system_prompt:
+             injected_message = f"[System Instructions - STRICTLY FOLLOW THESE]:\n{route_config.system_prompt}{memory_context}\n\n[User Message]:\n{event.content}"
+        else:
+             injected_message = event.content if not memory_context else f"[System Context]:{memory_context}\n\n[User Message]:\n{event.content}"
+
+        await session.send(MessageOptions(prompt=injected_message))
         
         # Wait
         await done_event.wait()

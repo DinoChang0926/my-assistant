@@ -20,25 +20,27 @@ class LocalMemoryTool(BaseTool):
         "- 'list': 列出所有已記憶的主題鍵值 (不需 key 與 value)。"
     )
     
-    parameters: dict = Field(default_factory=lambda: {
-        "type": "object",
-        "properties": {
-            "action": {
-                "type": "string",
-                "enum": ["set", "get", "delete", "list"],
-                "description": "要執行的操作：set(儲存), get(讀取), delete(刪除), list(列出所有鍵值)"
+    @property
+    def parameters(self) -> dict:
+        return {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["set", "get", "delete", "list"],
+                    "description": "要執行的操作：set(儲存), get(讀取), delete(刪除), list(列出所有鍵值)"
+                },
+                "key": {
+                    "type": "string",
+                    "description": "記憶的主題或鍵值 (例如：'user_name', 'favorite_food')。list 操作不需提供。"
+                },
+                "value": {
+                    "type": "string",
+                    "description": "記憶的具體內容。僅在 action 為 'set' 時需要提供。"
+                }
             },
-            "key": {
-                "type": "string",
-                "description": "記憶的主題或鍵值 (例如：'user_name', 'favorite_food')。list 操作不需提供。"
-            },
-            "value": {
-                "type": "string",
-                "description": "記憶的具體內容。僅在 action 為 'set' 時需要提供。"
-            }
-        },
-        "required": ["action"]
-    })
+            "required": ["action"]
+        }
 
     def _get_memory_file(self) -> Path:
         """Returns the path to the local memory JSON file."""

@@ -99,6 +99,7 @@ class ToolRegistry:
     def load_static_tools(self):
         """Load built-in tools."""
         self._load_from_directory(self.static_path, "static_tool_")
+        self._load_from_directory(self.static_path / "atomic", "static_tool_")
 
     def load_dynamic_tools(self):
         """Load AI-generated tools."""

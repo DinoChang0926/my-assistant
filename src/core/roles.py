@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from typing import List, Optional
+from src.brain.prompts import GENERAL_SYSTEM_PROMPT
 
 @dataclass
 class AgentRole:
@@ -17,7 +18,7 @@ class RoleRegistry:
     SUPERVISOR = AgentRole(
         role_id="supervisor",
         description="Friendly general assistant, preserves model's native persona.",
-        system_prompt=None,  # Trust the model
+        system_prompt=GENERAL_SYSTEM_PROMPT,
         temperature=0.7
     )
     

@@ -39,7 +39,33 @@ class SessionManager:
         self._sessions: Dict[str, SessionWrapper] = {}
         print(f"SessionManager initialized with storage: {self.storage_path}")
 
+    def _get_mapping_file(self) -> Path:
+        return self.storage_path / "session_mapping.json"
+
+    def _load_mapping(self) -> Dict[str, str]:
+        mapping_file = self._get_mapping_file()
+        if mapping_file.exists():
+            try:
+                import json
+                with open(mapping_file, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {}
+
+    def _save_mapping(self, mapping: dict):
+        import json
+        try:
+            with open(self._get_mapping_file(), "w", encoding="utf-8") as f:
+                json.dump(mapping, f, indent=2)
+        except Exception as e:
+            print(f"Error saving session mapping: {e}")
+
     async def get_or_create(self, session_id: str, route_config: RouteConfig, tools: Optional[list] = None) -> SessionWrapper:
+        # Load persistent mapping to find the actual SDK UUID
+        mapping = self._load_mapping()
+        sdk_session_id = mapping.get(session_id)
+
         # 1. Try to Resume or Sync existing
         config_dir = str(self.storage_path)
         
@@ -58,21 +84,28 @@ class SessionManager:
         if tools:
             resume_config["tools"] = tools
 
-        try:
-            print(f"Syncing/Resuming session {session_id}...")
-            sdk_session = await self.client.resume_session(
-                session_id=session_id,
-                config=resume_config
-            )
-            print(f"Successfully synced/resumed session: {session_id}")
-            wrapper = SessionWrapper(session_id, sdk_session)
-            self._sessions[session_id] = wrapper
-            return wrapper
-        except Exception as e:
-            if session_id in self._sessions:
-                 print(f"Resume context failed, falling back to cached session: {e}")
-                 return self._sessions[session_id]
-            print(f"Resume failed (expected for new sessions): {e}")
+        if sdk_session_id:
+            try:
+                print(f"Syncing/Resuming session UUID {sdk_session_id} for local alias {session_id}...")
+                sdk_session = await self.client.resume_session(
+                    session_id=sdk_session_id,
+                    config=resume_config
+                )
+                print(f"Successfully synced/resumed session UUID: {sdk_session_id}")
+                wrapper = SessionWrapper(session_id, sdk_session)
+                self._sessions[session_id] = wrapper
+                return wrapper
+            except Exception as e:
+                err_msg = str(e)
+                if "Session not found" in err_msg:
+                    print(f"Session UUID {sdk_session_id} not found on server, will create a new one.")
+                elif session_id in self._sessions:
+                     print(f"Resume context failed, falling back to cached session: {e}")
+                     return self._sessions[session_id]
+                else:
+                     print(f"Resume failed: {e}")
+        else:
+            print(f"No existing mapping for {session_id}, creating new.")
 
         # 2. Create New
         print(f"Creating new session {session_id}...")
@@ -89,6 +122,11 @@ class SessionManager:
 
             sdk_session = await self.client.create_session(session_config)
             
+            # Save the new mapping
+            mapping[session_id] = sdk_session.session_id
+            self._save_mapping(mapping)
+            print(f"Mapped {session_id} -> UUID {sdk_session.session_id}")
+
             wrapper = SessionWrapper(session_id, sdk_session)
             self._sessions[session_id] = wrapper
             return wrapper
