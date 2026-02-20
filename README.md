@@ -7,6 +7,7 @@
 - **模組化單體架構**: 清楚的層級劃分：感知層、大腦層、記憶層、技能層 (Skills)。
 - **自我進化機制 (Agentic Self-Evolution)**: Agent 可於運行時偵測能力缺失，自動編寫、測試並部署新技能，無需重啟服務。
 - **元技能系統 (Meta-Skills)**: 提供 `create_tool`、`inspect_tool`、`reload_tools` 等核心開發技能。
+- **本機記憶體持久化 (Local Memory Persistence)**: 提供跨會話 (Session Resumption) 連續對話能力，重啟不流失過往記憶。
 - **安全代碼驗證**: 整合 AST 靜態分析，確保生成的技能符合安全與行數規範。
 - **GitOps PR 工作流**: 自動建立 GitHub Branch 並發起 PR，實現人類在環 (Human-in-the-loop) 的代碼審核。
 
@@ -16,14 +17,16 @@
 my-assistant/
 ├── src/
 │   ├── core/          # 標準化事件與介面定義
-│   ├── perception/    # 感知層 (FastAPI, Gateway)
+│   ├── perception/    # 感知層 (FastAPI, Gateway, Telegram session 處理)
 │   ├── brain/         # 大腦層 (Router, Orchestrator, Prompts)
-│   ├── memory/        # 記憶層 (Session Manager)
+│   ├── memory/        # 記憶層 (Session Manager, Session Mapping)
 │   └── tools/         # 技能層 (Skills)
 │       ├── static/    # 靜態/元技能 (Reload, Create, Inspect, SubmitPR)
 │       └── dynamic/   # AI 自動生成的技能 (持久化於 Volume)
 ├── pyproject.toml     # 專案依賴管理
 └── storage/           # Session 與記憶持久化區
+    ├── local_memory.json     # 本機記憶與對話歷史紀錄
+    └── session_mapping.json  # 外部平台 (如 Telegram) 與核心 Session ID 的對照表
 ```
 
 ## 🚀 快速開始
@@ -39,7 +42,7 @@ cp .env.example .env
 必填變數：
 - `COPILOT_GITHUB_TOKEN`: GitHub Token (需具備 `repo` 權限以支援 PR 功能)。
 - `GITHUB_REPO_NAME`: 持久化與 PR 的目標儲存庫 (格式: `owner/repo`)。
-- `TELEGRAM_BOT_TOKEN`: 用於啟動 Telegram Bot (選填，若設定則自動啟動)。
+- `TELEGRAM_BOT_TOKEN`: 用於啟動 Telegram Bot (選填，若設定則自動啟動。會自動處理 Chat ID 記憶與映射，實現無縫的會話接續)。
 
 ### 2. 安裝
 
