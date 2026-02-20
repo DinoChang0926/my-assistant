@@ -36,6 +36,10 @@ class CreateToolTool(BaseTool):
                     "type": "string",
                     "description": "技能名稱 (e.g., 'crypto_price_checker')。"
                 },
+                "category": {
+                    "type": "string",
+                    "description": "技能分類 (e.g., 'finance', 'github', 'system')，預設為 'general'。"
+                },
                 "code_content": {
                     "type": "string",
                     "description": "完整的 Python 程式碼 (應繼承 BaseTool)。禁止使用 subprocess 或未安裝的庫。"
@@ -64,8 +68,18 @@ class CreateToolTool(BaseTool):
         else:
             filename = f"{safe_name}.py"
 
-        # 定位到 src/tools/dynamic
-        base_dir = Path(__file__).resolve().parent.parent / "dynamic"
+        category = kwargs.get("category", "general")
+        safe_category = "".join(c for c in category if c.isalnum() or c in ("-", "_")).lower()
+        if not safe_category:
+            safe_category = "general"
+
+        # 定位到 storage/dynamic_tools/{category}
+        if self.registry and hasattr(self.registry, 'dynamic_path'):
+            base_dir = self.registry.dynamic_path / safe_category
+        else:
+            # Fallback (如果在未完整依賴注入的情況下執行)
+            base_dir = Path(__file__).resolve().parent.parent.parent.parent / "storage" / "dynamic_tools" / safe_category
+            
         file_path = base_dir / filename
         
         async with self._lock:

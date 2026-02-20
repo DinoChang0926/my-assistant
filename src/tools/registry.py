@@ -18,7 +18,10 @@ class ToolRegistry:
         self._lock = asyncio.Lock()  # 🛡️ Prevent race conditions during refresh
         self._base_dir = Path(__file__).parent
         self.static_path = self._base_dir / "static"
-        self.dynamic_path = self._base_dir / "dynamic"
+        
+        # 移至 storage/dynamic_tools 確保 Docker 容器重啟也能持久化
+        self.dynamic_path = self._base_dir.parent.parent / "storage" / "dynamic_tools"
+        self.dynamic_path.mkdir(parents=True, exist_ok=True)
 
     def register(self, tool: BaseTool):
         self._tools[tool.name] = tool
@@ -44,7 +47,8 @@ class ToolRegistry:
         # Force re-import to handle filesystem changes
         importlib.invalidate_caches()
 
-        for f in dir_path.glob("*.py"):
+        # 使用 rglob 支援巢狀的分類(Category)資料夾掃描
+        for f in dir_path.rglob("*.py"):
             if f.name.startswith("__"):
                 continue
             
@@ -106,7 +110,7 @@ class ToolRegistry:
         self._load_from_directory(self.dynamic_path, "dynamic_tool_")
 
     async def refresh(self) -> dict:
-        """Async refresh with lock protection."""
+        """Async refresh with lock protection. Also updates the skills index JSON."""
         async with self._lock:
             print("Refreshing tools...")
             # 1. Clear current tools
@@ -116,6 +120,17 @@ class ToolRegistry:
             self.load_static_tools()
             self.load_dynamic_tools()
             
+            # 3. 匯出技能目錄 (JSON Index) 供快速檢索
+            try:
+                index_data = self.get_all_schemas()
+                index_file = self.dynamic_path / "skills_index.json"
+                import json
+                with open(index_file, "w", encoding="utf-8") as f:
+                    json.dump(index_data, f, ensure_ascii=False, indent=2)
+                print(f"Skills index exported to {index_file}")
+            except Exception as e:
+                print(f"Failed to export skills index: {e}")
+
             print(f"Refresh complete. Total tools: {len(self._tools)}")
             return {
                 "status": "ok", 

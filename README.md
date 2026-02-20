@@ -21,12 +21,13 @@ my-assistant/
 │   ├── brain/         # 大腦層 (Router, Orchestrator, Prompts)
 │   ├── memory/        # 記憶層 (Session Manager, Session Mapping)
 │   └── tools/         # 技能層 (Skills)
-│       ├── static/    # 靜態/元技能 (Reload, Create, Inspect, SubmitPR)
-│       └── dynamic/   # AI 自動生成的技能 (持久化於 Volume)
+│       └── static/    # 靜態/元技能 (Reload, Create, Inspect, SubmitPR)
 ├── pyproject.toml     # 專案依賴管理
 └── storage/           # Session 與記憶持久化區
     ├── local_memory.json     # 本機記憶與對話歷史紀錄
-    └── session_mapping.json  # 外部平台 (如 Telegram) 與核心 Session ID 的對照表
+    ├── session_mapping.json  # 外部平台 (如 Telegram) 與核心 Session ID 的對照表
+    └── dynamic_tools/        # AI 自動生成的技能 (按分類存放持久化於 Volume)
+        └── skills_index.json # 動態技能的快速檢索總表
 ```
 
 ## 🚀 快速開始
