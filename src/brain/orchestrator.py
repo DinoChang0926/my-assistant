@@ -43,10 +43,16 @@ class TaskOrchestrator:
                         args = invocation.get("arguments", {})
                         if args is None: args = {}
                         
+                        # 將推播函數注入到工具參數中
+                        if status_callback:
+                            args["status_callback"] = status_callback
+                            
                         result_data = await t_instance.execute(**args)
                         
                         result_str = str(result_data)
-                        MAX_LENGTH = 10000
+                        # 強制截斷工具回傳的字串長度，防範 Payload 堆疊
+                        # 若回傳過大，即使單次未爆掉，數次對話後仍會觸發 400 invalid_request_body
+                        MAX_LENGTH = 4000
                         if len(result_str) > MAX_LENGTH:
                             result_str = result_str[:MAX_LENGTH] + "\n...(truncated due to length limits)"
                             
@@ -108,24 +114,21 @@ class TaskOrchestrator:
         done_event = asyncio.Event()
 
         def handle_event(event_obj: Any):
+            import logging
+            logger = logging.getLogger("orchestrator")
             e_type = event_obj.type.value if hasattr(event_obj.type, 'value') else str(event_obj.type)
-            print(f"Captured event: {e_type}")
+            logger.debug(f"Captured event: {e_type}")
             
             if e_type == "assistant.message":
-                # Depending on SDK streaming behavior, 'content' might be a delta or the full accumulated text.
-                # In standard mode without streaming explicitly requested, it usually fires multiple times with the full text so far.
-                # We overwrite instead of append to prevent duplication.
                 turn_data["assistant_message"] = event_obj.data.content
-                print(f"Assistant message received: {event_obj.data.content[:50]}...")
+                logger.debug(f"Assistant message received: {event_obj.data.content[:50]}...")
             elif e_type == "tool.execution_start":
                 turn_data["tools_used"].append({
                     "name": event_obj.data.tool_name,
                     "args": event_obj.data.arguments,
                     "status": "running"
                 })
-                print(f"Tool execution started by SDK: {event_obj.data.tool_name}")
-                if status_callback and event_obj.data.tool_name not in ["report_intent", "local_memory"]:
-                    asyncio.create_task(status_callback(f"⚙️ 正在使用技能: {event_obj.data.tool_name}..."))
+                print(f"[SDK Tool Execution Started]: {event_obj.data.tool_name}")
             elif e_type == "tool.execution_complete":
                 # Find matching tool call and update status
                 for t in turn_data["tools_used"]:
@@ -133,15 +136,13 @@ class TaskOrchestrator:
                         t["status"] = "success"
                         t["result_summary"] = str(event_obj.data.result)[:200]
                         break
-                print(f"Tool execution complete: {event_obj.data.tool_name}")
+                logger.debug(f"Tool execution complete: {event_obj.data.tool_name}")
             elif e_type == "session.error":
                 turn_data["error"] = event_obj.data.message
-                print(f"SDK Error: {event_obj.data.message}")
-                if status_callback:
-                    asyncio.create_task(status_callback(f"❌ 執行發生錯誤: {event_obj.data.message}"))
+                print(f"[SDK Error]: {event_obj.data.message}")
                 done_event.set()
             elif e_type == "session.idle":
-                print("Session idle, finishing...")
+                logger.debug("Session idle, finishing...")
                 done_event.set()
 
         unsubscribe = session.on(handle_event)
@@ -164,14 +165,17 @@ class TaskOrchestrator:
         except Exception as e:
             print(f"[Orchestrator] Error reading local memory: {e}")
 
-        # 5. Send message with injected prompt and context to bypass SDK overrides
-        # We prepend our carefully crafted system prompt and the loaded memory context
-        # directly into the user's message, wrapped in a system block.
-        if route_config.system_prompt:
-             injected_message = f"[System Instructions - STRICTLY FOLLOW THESE]:\n{route_config.system_prompt}{memory_context}\n\n[User Message]:\n{event.content}"
+        # 5. Prepare the message payload.
+        # 我們將記憶附加到使用者的輸入中，但【絕對不要在這裡插入 System Prompt】。
+        # 因為把 System Prompt 放進每輪的 User Message 會導致 Session History 隨對話次數指數級膨脹，
+        # 最終引發 Copilot SDK 報出 400 invalid_request_body。
+        # System Prompt 已經在 _get_or_create 建立 session 時作為 system_instructions 傳過一次了。
+        if memory_context:
+            injected_message = f"[System Context]:{memory_context}\n\n[User Message]:\n{event.content}"
         else:
-             injected_message = event.content if not memory_context else f"[System Context]:{memory_context}\n\n[User Message]:\n{event.content}"
+            injected_message = event.content
 
+        # Optionally passing instructions here if SDK allows, but prompt is strictly user msg.
         await session.send(MessageOptions(prompt=injected_message))
         
         # Wait

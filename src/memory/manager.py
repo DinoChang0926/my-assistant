@@ -80,13 +80,19 @@ class SessionManager:
             "config_dir": config_dir
         }
         if route_config.system_prompt is not None:
-             resume_config["system_message"] = route_config.system_prompt
+             # SDK types specify SystemMessageConfig is a dict with 'mode' and 'content'
+             resume_config["system_message"] = {"mode": "replace", "content": route_config.system_prompt}
              print(f"[Session] Resume with custom System Prompt (Role: {route_config.role.role_id if route_config.role else 'unknown'})")
         else:
              print(f"[Session] Resume with NATIVE Behavior (Role: {route_config.role.role_id if route_config.role else 'unknown'})")
 
         if route_config.model_name:
             resume_config["model"] = route_config.model_name
+            
+        # 嚴厲封鎖 SDK 原生工具，避免子代理人亂寫檔案或執行高危險指令
+        banned_native_tools = ["create", "replace", "view", "run_command", "run_terminal_command"]
+        resume_config["excluded_tools"] = banned_native_tools
+
         if tools:
             resume_config["tools"] = tools
 
@@ -118,10 +124,15 @@ class SessionManager:
         try:
             session_config = {}
             if route_config.system_prompt is not None:
-                session_config["system_message"] = route_config.system_prompt
+                # SDK types specify SystemMessageConfig is a dict with 'mode' and 'content'
+                session_config["system_message"] = {"mode": "replace", "content": route_config.system_prompt}
             
             if route_config.model_name:
                 session_config["model"] = route_config.model_name
+                
+            # 嚴厲封鎖 SDK 原生工具，避免子代理人亂寫檔案或執行高危險指令
+            banned_native_tools = ["create", "replace", "view", "run_command", "run_terminal_command"]
+            session_config["excluded_tools"] = banned_native_tools
             
             if tools:
                 session_config["tools"] = tools

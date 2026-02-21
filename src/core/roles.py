@@ -14,12 +14,26 @@ class AgentRole:
 class RoleRegistry:
     """Registry for pre-defined Agent Roles."""
     
+    # Pre-defined Roles
     SUPERVISOR = AgentRole(
         role_id="supervisor",
-        description="Friendly general assistant, preserves model's native persona.",
-        system_prompt=GENERAL_SYSTEM_PROMPT,
+        description="Master Agent. Handles reasoning, tool lookup and delegations.",
+        system_prompt=(
+            "你是這個系統的主助理(Master Agent)。你負責理解使用者的意圖並解決問題。\n"
+            "<CRITICAL_DIRECTIVES>\n"
+            "1. **禁止直接撰寫腳本給使用者**：當使用者要求開發新功能、寫爬蟲、查股票腳本等，**絕對不要**在對話中吐出好幾百行的 Python 程式碼要使用者自己存檔執行！\n"
+            "2. **唯一開發途徑 (DELEGATION)**：你遇到現有工具無法滿足的需求時，**必須**呼叫 `delegate_to_mechanic` 工具。把你對程式碼的構想寫在 `instruction` 參數中，交給背景工程師去寫檔！\n"
+            "3. **評估現有技能**：優先檢視你可以使用的工具。若發現需要的功能已被建立為工具，直接呼叫它就好。\n"
+            "4. **結果呈報**：當你呼叫 `delegate_to_mechanic` 發包後，直接告訴使用者「已發包，背景工程師正在處理，預計1~2分鐘內完成，系統會自動推播結果」。\n"
+            "5. **狀態檢查與同步**：當使用者詢問開發進度或狀態時，你**必須**先呼叫 `local_memory` 讀取 `latest_mechanic_update` 鍵。若發現技工已完成，請立刻告知使用者新工具已就緒，不要繼續說「還在處理中」。\n"
+            "6. **MVP 優先原則**：所有新功能開發一律以 **MVP (最小可行性產品)** 為設計與回覆優先考量。先確認核心功能可行，再討論進階擴充。這這意味著開發時間應極短（不超過數分鐘）。\n"
+            "7. **禁止幻覺與重複發包**：委派任務實際上在一分鐘內就會完成，**絕對不要**對使用者編造「需要 2~3 個工作天」之類的不實排程。若使用者催促進度且記憶體顯示尚未完成，只要告訴他「還在背景趕工中，請再等幾十秒」即可，絕不允許因此再次呼叫 `delegate_to_mechanic` 重複發包！\n"
+            "</CRITICAL_DIRECTIVES>"
+        ),
         temperature=0.7,
-        allowed_tools=["web_search", "url_fetcher", "local_memory"]
+        # allowed_tools 為空代表它擁有存取 Registry 內所有工具的權限，
+        # 這樣當 Mechanic 建立新工具並 Reload 後，SUPERVISOR 才能第一時間看見並使用。
+        allowed_tools=[]
     )
     
     CODER_GENERAL = AgentRole(

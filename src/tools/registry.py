@@ -78,8 +78,13 @@ class ToolRegistry:
                                 tool_name = getattr(temp_tool, "name", None)
                                 
                                 if tool_name and tool_name in self._tools:
-                                    print(f"Tool '{tool_name}' already registered (likely via DI), skipping auto-load from {f.name}")
-                                    continue
+                                    # 如果是 DI 注入的核心工具（不在掃描目錄中）就跳過
+                                    # 但如果只是舊版工具被重新編譯，我們應該要允許覆蓋
+                                    if tool_name in ["create_tool", "delegate_to_mechanic", "reload_tools"]:
+                                        print(f"Tool '{tool_name}' is a DI core tool, skipping auto-load from {f.name}")
+                                        continue
+                                    else:
+                                        print(f"Tool '{tool_name}' already exists, overwriting with new version from {f.name}")
 
                                 tool_instance = obj()
                                 self.register(tool_instance)
@@ -113,9 +118,11 @@ class ToolRegistry:
         """Async refresh with lock protection. Also updates the skills index JSON."""
         async with self._lock:
             print("Refreshing tools...")
-            # 1. Clear current tools
+            # 1. Clear current tools, but preserve DI core tools
+            di_core_names = ["create_tool", "delegate_to_mechanic", "reload_tools", "google_auth"]
+            preserved_tools = {name: self._tools[name] for name in di_core_names if name in self._tools}
             self._tools.clear()
-            
+            self._tools.update(preserved_tools)
             # 2. Reload
             self.load_static_tools()
             self.load_dynamic_tools()

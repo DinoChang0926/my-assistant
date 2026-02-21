@@ -23,7 +23,10 @@ class ReloadToolsTool(BaseTool):
 
     @property
     def parameters(self) -> dict:
-        return {}
+        return {
+            "type": "object",
+            "properties": {}
+        }
 
     async def execute(self, **kwargs) -> dict:
         print(f"Agent triggered skill reload...")

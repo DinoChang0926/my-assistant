@@ -40,20 +40,26 @@ async def lifespan(app: FastAPI):
         # Initialize Meta-Tools with Dependency Injection
         from .tools.static.create_tool import CreateToolTool
         from .tools.static.reload_tools import ReloadToolsTool
+        from .tools.static.delegate_mechanic import DelegateToMechanicTool
         
         create_tool_instance = CreateToolTool(registry=tool_registry)
         reload_tools_instance = ReloadToolsTool(registry=tool_registry)
+        delegate_tool_instance = DelegateToMechanicTool(orchestrator=None) # Orchestrator instantiated after
         
         # Manually register DI tools
         tool_registry.register(create_tool_instance)
         tool_registry.register(reload_tools_instance)
-        print(f"[System] Registered Meta-Skills with DI: {create_tool_instance.name}, {reload_tools_instance.name}")
+        tool_registry.register(delegate_tool_instance)
+        print(f"[System] Registered Meta-Skills with DI: {create_tool_instance.name}, {reload_tools_instance.name}, {delegate_tool_instance.name}")
         
         # Load other static and dynamic tools
         tool_registry.load_static_tools()
         tool_registry.load_dynamic_tools()
         
         orchestrator = TaskOrchestrator(session_manager, tool_registry)
+        
+        # Late binding for orchestrator
+        delegate_tool_instance.orchestrator = orchestrator
         
         router = IntentClassifier()
         gateway = UnifiedGateway(router, orchestrator)
