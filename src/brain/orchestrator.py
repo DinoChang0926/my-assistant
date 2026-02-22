@@ -79,20 +79,24 @@ class TaskOrchestrator:
             ))
         
         # 1.5 Inject Skill List into System Prompt
-        # Grouping by category to show clear architecture to AI
+        # Grouping by category; truncate descriptions to save token budget
         categories = {}
         for t in base_tools:
             cat = getattr(t, 'category', 'general')
             if cat not in categories:
                 categories[cat] = []
-            categories[cat].append(f"  - {t.name}: {t.description}")
+            # Truncate description to 60 chars to keep prompt compact
+            short_desc = t.description[:60].replace('\n', ' ')
+            if len(t.description) > 60:
+                short_desc += "..."
+            categories[cat].append(f"  - {t.name}: {short_desc}")
         
         skill_list_groups = []
         for cat, skills in sorted(categories.items()):
-            group_str = f"## [{cat.upper()}]\n" + "\n".join(skills)
+            group_str = f"[{cat.upper()}] " + " | ".join(s.strip("  - ") for s in skills)
             skill_list_groups.append(group_str)
         
-        skill_list_str = "\n\n".join(skill_list_groups)
+        skill_list_str = "\n".join(skill_list_groups)
         if not skill_list_str:
             skill_list_str = "(No unlocked skills available, please use create_tool to create one)"
 
@@ -164,18 +168,33 @@ class TaskOrchestrator:
         import os
         from src.config import settings
 
-        memory_context = ""
+        user_facts = ""
+        session_summary = ""
         memory_file = os.path.join(settings.SESSION_STORAGE_PATH, "local_memory.json")
+        
+        memory_data = {}
         try:
             if os.path.exists(memory_file):
                 with open(memory_file, 'r', encoding='utf-8') as f:
                     memory_data = json.load(f)
                     if memory_data:
-                        memory_context = "\n\n### [專屬本機記憶 local_memory.json (請將此視為使用者的背景資訊)]:\n"
+                        session_key = f"session_summary_{event.session_id}"
                         for k, v in memory_data.items():
-                            memory_context += f"- {k}: {v}\n"
+                            if k == session_key:
+                                # Format session summary (stored as list of events joined by ||||)
+                                items = [i.strip() for i in v.split("||||") if i.strip()]
+                                if items:
+                                    session_summary = "\n".join(f"  - {i}" for i in items)
+                            else:
+                                user_facts += f"- {k}: {v}\n"
         except Exception as e:
             print(f"[Orchestrator] Error reading local memory: {e}")
+
+        memory_context = ""
+        if user_facts:
+            memory_context += "### [使用者長期記憶 (User Persistent Memory)]:\n" + user_facts
+        if session_summary:
+            memory_context += "\n### [上次對話進度摘要 (Session History Summary) - 這對維持上下文極度重要]:\n" + session_summary
 
         # 5. Prepare the message payload.
         # 我們將記憶附加到使用者的輸入中，但【絕對不要在這裡插入 System Prompt】。
@@ -196,11 +215,35 @@ class TaskOrchestrator:
         unsubscribe()
         wrapper.turn_count += 1
 
-        # Clean up any residual thought tags if present
+        # 6. Post-process and Persist Session Summary
+        from datetime import datetime
         final_content = turn_data["assistant_message"]
         if "<think>" in final_content:
             final_content = re.sub(r'<think>.*?</think>', '', final_content, flags=re.DOTALL).strip()
         
+        # ── 自動持久化 Session 摘要 ──
+        if final_content and len(final_content) > 10:
+            session_key = f"session_summary_{event.session_id}"
+            # 抓取回應的一小段作為摘要 (在此可以做得更聰明，比如由 LLM 摘要，但我們先用簡單版)
+            summary_entry = f"[{datetime.now().strftime('%m/%d %H:%M')}] {final_content[:200]}"
+            if len(final_content) > 200:
+                summary_entry += "..."
+                
+            existing_str = memory_data.get(session_key, "")
+            summary_list = [s.strip() for s in existing_str.split("||||") if s.strip()]
+            # 只保留最近 3 輪
+            summary_list = summary_list[-2:] 
+            summary_list.append(summary_entry)
+            
+            memory_data[session_key] = "||||".join(summary_list)
+            
+            try:
+                with open(memory_file, 'w', encoding='utf-8') as f:
+                    json.dump(memory_data, f, ensure_ascii=False, indent=2)
+                print(f"[Orchestrator] Session summary persisted for {event.session_id}")
+            except Exception as e:
+                print(f"[Orchestrator] Failed to save session summary: {e}")
+
         return AgentResponse(
             content=final_content,
             tool_calls=turn_data["tools_used"]

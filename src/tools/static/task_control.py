@@ -6,15 +6,23 @@ class TaskStatusTool(BaseTool):
     查詢目前背景任務的執行狀態。
     """
     
-    name: str = "task_status"
-    category: str = "task_control"
-    description: str = (
-        "查詢背景委派任務的狀態。當使用者詢問進度時，主動呼叫此工具。\n"
-        "如果不提供 task_id，將列出所有正在執行的任務。"
-    )
-    
     def __init__(self, task_manager=None):
         self.task_manager = task_manager
+
+    @property
+    def name(self) -> str:
+        return "task_status"
+
+    @property
+    def category(self) -> str:
+        return "task_control"
+
+    @property
+    def description(self) -> str:
+        return (
+            "查詢背景委派任務的狀態。當使用者詢問進度時，主動呼叫此工具。\n"
+            "如果不提供 task_id，將列出所有正在執行的任務。"
+        )
 
     @property
     def parameters(self) -> dict:
@@ -52,12 +60,20 @@ class CancelTaskTool(BaseTool):
     隨時叫停正在進行中的背景委派任務。
     """
     
-    name: str = "cancel_task"
-    category: str = "task_control"
-    description: str = "取消特定 ID 的背景任務。當使用者明確表示「停、取消、不需要了」時，請呼叫此工具。"
-    
     def __init__(self, task_manager=None):
         self.task_manager = task_manager
+
+    @property
+    def name(self) -> str:
+        return "cancel_task"
+
+    @property
+    def category(self) -> str:
+        return "task_control"
+
+    @property
+    def description(self) -> str:
+        return "取消特定 ID 的背景任務。當使用者明確表示「停、取消、不需要了」時，請呼叫此工具。"
 
     @property
     def parameters(self) -> dict:
@@ -86,7 +102,6 @@ class CancelTaskTool(BaseTool):
         success = await self.task_manager.cancel(task_id)
         
         if success:
-            # 嘗試通知 Telegram
             status_callback = kwargs.get("status_callback")
             if status_callback:
                 await status_callback(f"❌ [系統部] 任務 {task_id} 已由主助理叫停。原因：{reason}")
