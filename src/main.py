@@ -75,17 +75,9 @@ async def lifespan(app: FastAPI):
         
         # 4. Initialize Telegram Bot
         if settings.TELEGRAM_BOT_TOKEN:
-            try:
-                telegram_bot = TelegramBot(gateway)
-                await telegram_bot.initialize()
-                
-                # Run polling in separate thread to avoid event loop conflicts
-                import threading
-                bot_thread = threading.Thread(target=telegram_bot.run_in_thread, daemon=True)
-                bot_thread.start()
-                
-            except Exception as e:
-                print(f"Failed to start Telegram Bot: {e}")
+            telegram_bot = TelegramBot(gateway)
+            await telegram_bot.start_bot()
+            print("Telegram Bot started in main event loop.")
         
         print("AI Agent Components Initialized.")
         
@@ -100,12 +92,12 @@ async def lifespan(app: FastAPI):
     # Shutdown logic
     print("AI Agent Shutting Down (Lifespan Shutdown)...")
     try:
+        if telegram_bot:
+            await telegram_bot.stop()
+            
         await session_manager.cleanup_all()
         if hasattr(client, 'stop'):
             await client.stop()
-        
-        if telegram_bot:
-            await telegram_bot.stop()
             
     except Exception as e:
         print(f"Error during shutdown: {e}")

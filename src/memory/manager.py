@@ -151,9 +151,29 @@ class SessionManager:
             print(f"Failed to create session: {e}")
             raise
 
+    def invalidate_session(self, session_id: str, route_config=None):
+        """
+        Invalidates a broken session so the next call will create a fresh one.
+        Called when an OSError / BrokenPipeError is detected on the SDK pipe.
+        """
+        role_id = route_config.role.role_id if (route_config and route_config.role) else "default"
+        namespaced = f"{session_id}_{role_id}"
+        
+        # 1. Remove from in-memory cache
+        self._sessions.pop(namespaced, None)
+        self._sessions.pop(session_id, None)
+        
+        # 2. Remove from persistent mapping (force new SDK session on next call)
+        mapping = self._load_mapping()
+        if namespaced in mapping:
+            del mapping[namespaced]
+            self._save_mapping(mapping)
+            
+        print(f"[SessionManager] Session invalidated for {namespaced} — will create fresh session on retry.")
+
     async def cleanup_all(self):
         # We don't want to destroy sessions on exit if we want persistence!
         # Just clear memory references.
         # If we call destroy(), the SDK might delete the persistent state.
         self._sessions.clear()
-        print("SessionManager cleanup complete (sessions preserved on disk).")
+        print("SessionManager cleanup complete (sessions preserved on disk.")

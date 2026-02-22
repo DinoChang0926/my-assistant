@@ -36,6 +36,43 @@ class ToolRegistry:
     def list_tools(self) -> List[str]:
         return list(self._tools.keys())
 
+    def _validate_tool_schema(self, tool) -> str:
+        """
+        Validates the tool's JSON Schema for common mistakes that cause Copilot API 400 errors.
+        Returns an error message string if invalid, or empty string if OK.
+        """
+        try:
+            schema = tool.parameters
+            if not isinstance(schema, dict):
+                return "parameters must be a dict"
+            
+            def check_schema(node, path=""):
+                if not isinstance(node, dict):
+                    return ""
+                node_type = node.get("type")
+                if node_type == "array" and "items" not in node:
+                    return f"array at '{path}' is missing 'items'"
+                
+                # Recurse into properties for object type
+                props = node.get("properties", {})
+                for k, v in props.items():
+                    err = check_schema(v, f"{path}.{k}" if path else k)
+                    if err:
+                        return err
+                
+                # Recurse into items for array type
+                items = node.get("items")
+                if isinstance(items, dict):
+                    err = check_schema(items, f"{path}[]")
+                    if err:
+                        return err
+                
+                return ""
+            
+            return check_schema(schema)
+        except Exception as e:
+            return f"schema validation error: {e}"
+
     def _load_from_directory(self, dir_path: Path, prefix: str):
         """Common scanning logic with namespace isolation via prefix."""
         if not dir_path.exists():
@@ -87,6 +124,15 @@ class ToolRegistry:
                                         print(f"Tool '{tool_name}' already exists, overwriting with new version from {f.name}")
 
                                 tool_instance = obj()
+                                
+                                # 🛡️ Schema Validation: Reject tools with invalid JSON schemas before they cause API 400 errors.
+                                # Common issues: array without 'items', object without 'properties'.
+                                schema_error = self._validate_tool_schema(tool_instance)
+                                if schema_error:
+                                    print(f"⚠️ Schema validation failed for '{tool_instance.name}' from {f.name}: {schema_error}")
+                                    print(f"   This tool will NOT be registered to prevent API 400 errors.")
+                                    continue
+                                    
                                 self.register(tool_instance)
                                 loaded_count += 1
                             except Exception as e:
@@ -107,8 +153,8 @@ class ToolRegistry:
 
     def load_static_tools(self):
         """Load built-in tools."""
+        # Using rglob in _load_from_directory already scans subdirectories (like atomic)
         self._load_from_directory(self.static_path, "static_tool_")
-        self._load_from_directory(self.static_path / "atomic", "static_tool_")
 
     def load_dynamic_tools(self):
         """Load AI-generated tools."""

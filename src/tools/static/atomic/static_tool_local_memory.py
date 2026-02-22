@@ -1,24 +1,28 @@
 import os
 import json
 from pathlib import Path
-from pydantic import Field
+from datetime import datetime, timedelta
 from src.tools.base import BaseTool
 
 class LocalMemoryTool(BaseTool):
     """
-    Tool to store and retrieve long-term memory locally in a JSON file.
-    Use this to remember user preferences, important facts, or context across sessions.
+    Tool to store and retrieve long-term memory locally.
+    Supports two types:
+    - 'fact': Permanent user preferences and facts (local_memory.json)
+    - 'event': Ephemeral session summaries and logs (event_log.json) with auto-cleanup.
     """
     
     name: str = "local_memory"
     category: str = "memory"
     description: str = (
-        "儲存與讀取長期記憶的工具。當使用者要求你「記住」某件事，或你需要記錄跨對話的偏好設定時使用。\n"
+        "儲存與讀取記憶的工具。支援兩種類型：\n"
+        "1. 'fact' (長期事實): 用於記錄使用者偏好、姓名、重要人事物。會永久保留。\n"
+        "2. 'event' (事件紀錄): 用於記錄對話摘要、任務執行結果。會定期自動清理。\n\n"
         "支援的操作(action)：\n"
-        "- 'set': 儲存或更新記憶 (需要 key 與 value)。\n"
-        "- 'get': 讀取特定記憶 (需要 key)。\n"
-        "- 'delete': 刪除特定記憶 (需要 key)。\n"
-        "- 'list': 列出所有已記憶的主題鍵值 (不需 key 與 value)。"
+        "- 'set': 儲存記憶 (需提供 data_type, key, value)。\n"
+        "- 'get': 讀取特定記憶 (需提供 data_type, key)。\n"
+        "- 'delete': 刪除特定記憶 (需提供 data_type, key)。\n"
+        "- 'list': 列出所有鍵值 (需提供 data_type)。"
     )
     
     @property
@@ -31,91 +35,136 @@ class LocalMemoryTool(BaseTool):
                     "enum": ["set", "get", "delete", "list"],
                     "description": "要執行的操作：set(儲存), get(讀取), delete(刪除), list(列出所有鍵值)"
                 },
+                "data_type": {
+                    "type": "string",
+                    "enum": ["fact", "event"],
+                    "description": "資料類型：'fact' (長期事實，存於 local_memory.json) 或 'event' (事件紀錄，存於 event_log.json)",
+                    "default": "fact"
+                },
                 "key": {
                     "type": "string",
-                    "description": "記憶的主題或鍵值 (例如：'user_name', 'favorite_food')。list 操作不需提供。"
+                    "description": "記憶的鍵值 (例如：'user_name', 'session_summary')。"
                 },
                 "value": {
                     "type": "string",
-                    "description": "記憶的具體內容。僅在 action 為 'set' 時需要提供。"
+                    "description": "記憶的具體內容。僅在 action 為 'set' 時需要。"
                 }
             },
             "required": ["action"]
         }
 
-    def _get_memory_file(self) -> Path:
-        """Returns the path to the local memory JSON file."""
-        # Ensure the path aligns with the project's storage directory
+    def _get_file_path(self, data_type: str) -> Path:
         storage_dir = Path("storage")
         storage_dir.mkdir(exist_ok=True)
-        return storage_dir / "local_memory.json"
+        filename = "local_memory.json" if data_type == "fact" else "event_log.json"
+        return storage_dir / filename
 
-    def _load_memory(self) -> dict:
-        """Loads the memory from the JSON file."""
-        mem_file = self._get_memory_file()
-        if not mem_file.exists():
-            return {}
+    def _load_data(self, data_type: str):
+        path = self._get_file_path(data_type)
+        if not path.exists():
+             return {} if data_type == "fact" else []
         
         try:
-            with open(mem_file, "r", encoding="utf-8") as f:
+            with open(path, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except json.JSONDecodeError:
-            # If file is corrupted, return empty dictionary
-            return {}
-        except Exception as e:
-            print(f"Error loading memory: {e}")
-            return {}
+        except Exception:
+            return {} if data_type == "fact" else []
 
-    def _save_memory(self, memory_data: dict):
-        """Saves the memory data to the JSON file."""
-        mem_file = self._get_memory_file()
+    def _save_data(self, data_type: str, data):
+        path = self._get_file_path(data_type)
         try:
-            with open(mem_file, "w", encoding="utf-8") as f:
-                json.dump(memory_data, f, ensure_ascii=False, indent=2)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            print(f"Error saving memory: {e}")
+            print(f"Error saving {data_type} data: {e}")
+
+    def _cleanup_event_log(self, logs: list) -> list:
+        """Cleanup logic: max 50 entries and max 7 days old."""
+        now = datetime.now()
+        threshold = now - timedelta(days=7)
+        
+        # 1. Filter by age
+        filtered = []
+        for entry in logs:
+            try:
+                ts_str = entry.get("timestamp")
+                if ts_str:
+                    ts = datetime.fromisoformat(ts_str)
+                    if ts > threshold:
+                        filtered.append(entry)
+            except Exception:
+                # If timestamp is missing or invalid, keep it (might be old format)
+                filtered.append(entry)
+        
+        # 2. Filter by count (keep last 50)
+        return filtered[-50:]
 
     async def execute(self, **kwargs) -> dict:
         action = kwargs.get("action")
+        data_type = kwargs.get("data_type", "fact")
         key = kwargs.get("key")
         value = kwargs.get("value")
 
         if not action:
             return {"status": "error", "message": "Missing 'action' parameter."}
 
-        memory_data = self._load_memory()
+        data = self._load_data(data_type)
 
         if action == "list":
-            keys = list(memory_data.keys())
-            return {
-                "status": "success",
-                "message": f"Found {len(keys)} memories.",
-                "keys": keys
-            }
+            if data_type == "fact":
+                keys = list(data.keys())
+            else:
+                keys = [entry.get("key") for entry in data]
+            return {"status": "success", "data_type": data_type, "keys": keys}
 
         if not key:
-             return {"status": "error", "message": f"Action '{action}' requires a 'key' parameter."}
+             return {"status": "error", "message": f"Action '{action}' requires a 'key'."}
 
         if action == "set":
             if value is None:
-                 return {"status": "error", "message": "Action 'set' requires a 'value' parameter."}
-            memory_data[key] = value
-            self._save_memory(memory_data)
-            return {"status": "success", "message": f"Memory '{key}' saved successfully.", "key": key, "value": value}
+                 return {"status": "error", "message": "Action 'set' requires a 'value'."}
+            
+            if data_type == "fact":
+                data[key] = value
+            else:
+                # Event log is a list with timestamps
+                new_entry = {
+                    "timestamp": datetime.now().isoformat(),
+                    "key": key,
+                    "value": value
+                }
+                data.append(new_entry)
+                data = self._cleanup_event_log(data)
+                
+            self._save_data(data_type, data)
+            return {"status": "success", "message": f"Saved as {data_type}.", "key": key}
 
         elif action == "get":
-            if key in memory_data:
-                return {"status": "success", "key": key, "value": memory_data[key]}
+            if data_type == "fact":
+                if key in data:
+                    return {"status": "success", "value": data[key]}
             else:
-                return {"status": "not_found", "message": f"Memory '{key}' not found."}
+                # For events, find the latest matching key
+                for entry in reversed(data):
+                    if entry.get("key") == key:
+                        return {"status": "success", "value": entry.get("value"), "timestamp": entry.get("timestamp")}
+            
+            return {"status": "not_found", "message": f"'{key}' not found in {data_type}."}
 
         elif action == "delete":
-            if key in memory_data:
-                del memory_data[key]
-                self._save_memory(memory_data)
-                return {"status": "success", "message": f"Memory '{key}' deleted successfully."}
+            if data_type == "fact":
+                if key in data:
+                    del data[key]
+                    self._save_data(data_type, data)
+                    return {"status": "success", "message": f"Deleted {key} from facts."}
             else:
-                 return {"status": "not_found", "message": f"Memory '{key}' not found, nothing to delete."}
+                # For events, remove all matching keys
+                initial_len = len(data)
+                data = [e for e in data if e.get("key") != key]
+                if len(data) < initial_len:
+                    self._save_data(data_type, data)
+                    return {"status": "success", "message": f"Deleted all {key} entries from events."}
+            
+            return {"status": "not_found", "message": "Nothing to delete."}
 
-        else:
-            return {"status": "error", "message": f"Unknown action '{action}'."}
+        return {"status": "error", "message": f"Unknown action '{action}'."}

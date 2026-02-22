@@ -2,6 +2,7 @@ import logging
 import asyncio
 import uuid
 import json
+import html
 from typing import Optional
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
@@ -23,50 +24,40 @@ class TelegramBot:
         self.bot_token = settings.TELEGRAM_BOT_TOKEN
 
     async def initialize(self):
-        pass # Moved to thread
-
-    def run_in_thread(self):
-        """Run bot polling in a separate thread."""
+        """Initialize the bot application."""
         if not self.bot_token:
-             return
-
-        logger.info("Starting Telegram Bot polling in separate thread...")
-        
-        # Create a new event loop for this thread
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        # Build Application INSIDE the thread's loop
+            return
+        logger.info("Initializing Telegram Bot...")
         self.app = ApplicationBuilder().token(self.bot_token).build()
         
         # Handlers
-        start_handler = CommandHandler('start', self.start)
-        message_handler = MessageHandler(filters.TEXT & (~filters.COMMAND), self.handle_message)
-        document_handler = MessageHandler(filters.Document.ALL, self.handle_document)
-        callback_handler = CallbackQueryHandler(self.handle_callback_query)
+        self.app.add_handler(CommandHandler('start', self.handle_start))
+        self.app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), self.handle_message))
+        self.app.add_handler(MessageHandler(filters.Document.ALL, self.handle_document))
+        self.app.add_handler(CallbackQueryHandler(self.handle_callback_query))
         
-        self.app.add_handler(start_handler)
-        self.app.add_handler(message_handler)
-        self.app.add_handler(document_handler)
-        self.app.add_handler(callback_handler)
+        await self.app.initialize()
 
-        # run_polling blocks, so must be in thread
-        self.app.run_polling(stop_signals=None)
+    async def start_bot(self):
+        """Start the bot polling."""
+        if not self.app:
+            await self.initialize()
         
-        loop.close()
+        if self.app:
+            logger.info("Starting Telegram Bot polling (Async)...")
+            await self.app.start()
+            await self.app.updater.start_polling(drop_pending_updates=True)
 
     async def stop(self):
+        """Shutdown the bot."""
         if self.app:
-            # shutdown is handled by run_polling's signal or updater.stop()
-            # Here we just want to ensure it closes roughly from the outside if needed.
-            # But run_polling handles lifecycle. We might just need to stop the loop.
-            # Actually, let's just use updater.stop() if possible or let it be.
-            # For simplicity in this architecture, we rely on daemon thread or exact stop.
-            await self.app.updater.stop()
+            logger.info("Stopping Telegram Bot...")
+            if self.app.updater.running:
+                await self.app.updater.stop()
             await self.app.stop()
             await self.app.shutdown()
 
-    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def handle_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"Command /start received from {update.effective_user.id}")
         await update.message.reply_text(
             "您好！我是您的 AI 助理。您可以直接與我對話，我具備寫程式與自我進化的能力。"
@@ -85,9 +76,12 @@ class TelegramBot:
         
         # Show which button was pressed by editing the original message
         original_text = query.message.text or ""
+        safe_original = html.escape(original_text)
+        safe_callback = html.escape(callback_data)
+        
         await query.edit_message_text(
-            text=f"{original_text}\n\n✅ 你選擇了：**{callback_data}**",
-            parse_mode="Markdown",
+            text=f"{safe_original}\n\n✅ 你選擇了：<b>{safe_callback}</b>",
+            parse_mode="HTML",
             reply_markup=None  # Remove the keyboard after selection
         )
         
@@ -248,10 +242,10 @@ class TelegramBot:
             err_detail = traceback.format_exc()
             logger.error(f"Error processing Telegram message: {err_detail}")
             # 主動回報錯誤細節，讓使用者與助理可以協作除錯
-            short_err = str(e)[:300]  # 避免訊息過長
-            await update.message.reply_text(
+            short_err = html.escape(str(e)[:300])
+            await update.message.reply_html(
                 f"⚠️ 我遇到了一個錯誤，需要請你協助：\n\n"
-                f"**錯誤類型**：`{type(e).__name__}`\n"
-                f"**訊息**：{short_err}\n\n"
+                f"<b>錯誤類型</b>：<code>{type(e).__name__}</code>\n"
+                f"<b>訊息</b>：{short_err}\n\n"
                 f"如果你覺得這是系統問題，可以叫我查看 logs 或重新啟動相關服務。"
             )

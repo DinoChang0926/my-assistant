@@ -46,7 +46,19 @@ class CreateToolTool(BaseTool):
                 },
                 "code_content": {
                     "type": "string",
-                    "description": "完整的 Python 程式碼 (應繼承 BaseTool)。禁止使用 subprocess 或未安裝的庫。"
+                    "description": (
+                        "完整的 Python 程式碼 (必須繼承 BaseTool)。\n"
+                        "⚠️ [JSON Schema 規則]: 'array' 必須定義 'items', 'object' 必須定義 'properties'。\n"
+                        "💡 [程式碼骨架]:\n"
+                        "from src.tools.base import BaseTool\n"
+                        "class MyTool(BaseTool):\n"
+                        "    @property\n"
+                        "    def name(self): return 'my_tool'\n"
+                        "    @property\n"
+                        "    def parameters(self):\n"
+                        "        return {'type':'object', 'properties':{'arg':{'type':'array','items':{'type':'string'}}}, 'required':['arg']}\n"
+                        "    async def execute(self, **kwargs): return {'status':'success'}"
+                    )
                 }
             },
             "required": ["tool_name", "code_content"]

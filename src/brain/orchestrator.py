@@ -117,7 +117,57 @@ class TaskOrchestrator:
             # Native Behavior: Do not inject skill list text, rely on SDK tools definition
             route_config.system_prompt = strict_instruction
 
-        # 2. Get/Create Session (with state sync)
+        # 2. Read local memory and append to system_prompt BEFORE session creation.
+        # ⚠️ 重要：記憶必須附加到 system_prompt，由 SDK 以 mode=replace 統一管理。
+        # 嚴禁注入到 user_message，否則每輪都會往 session history 寫入，最終觸發 400 invalid_request_body。
+        import json
+        import os
+        from src.config import settings
+        storage_path = settings.SESSION_STORAGE_PATH
+        memory_context = ""
+
+        # --- Type 1: Long-term Facts ---
+        facts_file = os.path.join(storage_path, "local_memory.json")
+        if os.path.exists(facts_file):
+            try:
+                with open(facts_file, 'r', encoding='utf-8') as f:
+                    facts_data = json.load(f)
+                    if facts_data:
+                        facts_str = ""
+                        for k, v in facts_data.items():
+                            if "session_summary" not in k and "latest_mechanic" not in k:
+                                facts_str += f"- {k}: {v}\n"
+                        if facts_str:
+                            memory_context += "### [長期事實記憶 (Facts)]:\n" + facts_str
+            except Exception as e:
+                print(f"[Orchestrator] Error reading facts: {e}")
+
+        # --- Type 2: Recent Events (Last 5) ---
+        events_file = os.path.join(storage_path, "event_log.json")
+        if os.path.exists(events_file):
+            try:
+                with open(events_file, 'r', encoding='utf-8') as f:
+                    events_data = json.load(f)
+                    if events_data and isinstance(events_data, list):
+                        event_str = ""
+                        for entry in events_data[-5:]:
+                            ts = entry.get("timestamp", "")[:16].replace("T", " ")
+                            event_str += f"- [{ts}] {entry.get('key')}: {entry.get('value')}\n"
+                        if event_str:
+                            memory_context += "\n### [近期事件紀錄 (Recent Events)]:\n" + event_str
+            except Exception as e:
+                print(f"[Orchestrator] Error reading events: {e}")
+
+        if memory_context:
+            memory_context += (
+                "\n[Memory Instruction]: 你具備透過 local_memory 工具讀寫記憶的能力。\n"
+                "- 請將永久性的偏好或事實存為 'fact' 類型 (local_memory.json)。\n"
+                "- 請將工作階段摘要或暫時性的進度更新存為 'event' 類型 (event_log.json)。"
+            )
+            # 附加到 system_prompt，SDK 使用 mode=replace 更新，不會污染 session history
+            route_config.system_prompt = (route_config.system_prompt or "") + "\n\n" + memory_context
+
+        # 3. Get/Create Session (system_prompt now includes fresh memory context)
         wrapper = await self.session_manager.get_or_create(event.session_id, route_config, tools=sdk_tools)
         session = wrapper.sdk_session
         
@@ -162,85 +212,134 @@ class TaskOrchestrator:
                 done_event.set()
 
         unsubscribe = session.on(handle_event)
-        
-        # 4. Read local memory for Context Injection
-        import json
-        import os
-        from src.config import settings
 
-        user_facts = ""
-        session_summary = ""
-        memory_file = os.path.join(settings.SESSION_STORAGE_PATH, "local_memory.json")
-        
-        memory_data = {}
-        try:
-            if os.path.exists(memory_file):
-                with open(memory_file, 'r', encoding='utf-8') as f:
-                    memory_data = json.load(f)
-                    if memory_data:
-                        session_key = f"session_summary_{event.session_id}"
-                        for k, v in memory_data.items():
-                            if k == session_key:
-                                # Format session summary (stored as list of events joined by ||||)
-                                items = [i.strip() for i in v.split("||||") if i.strip()]
-                                if items:
-                                    session_summary = "\n".join(f"  - {i}" for i in items)
-                            else:
-                                user_facts += f"- {k}: {v}\n"
-        except Exception as e:
-            print(f"[Orchestrator] Error reading local memory: {e}")
-
-        memory_context = ""
-        if user_facts:
-            memory_context += "### [使用者長期記憶 (User Persistent Memory)]:\n" + user_facts
-        if session_summary:
-            memory_context += "\n### [上次對話進度摘要 (Session History Summary) - 這對維持上下文極度重要]:\n" + session_summary
-
-        # 5. Prepare the message payload.
-        # 我們將記憶附加到使用者的輸入中，但【絕對不要在這裡插入 System Prompt】。
-        # 因為把 System Prompt 放進每輪的 User Message 會導致 Session History 隨對話次數指數級膨脹，
-        # 最終引發 Copilot SDK 報出 400 invalid_request_body。
-        # System Prompt 已經在 _get_or_create 建立 session 時作為 system_instructions 傳過一次了。
-        if memory_context:
-            injected_message = f"[System Context]:{memory_context}\n\n[User Message]:\n{event.content}"
-        else:
-            injected_message = event.content
+        # 5. User message — clean, no context injection.
+        # Memory context is already in system_prompt (updated at step 2, managed by SDK with mode=replace).
+        # DO NOT inject memory here — it would accumulate in session history and cause 400 overflow.
+        injected_message = event.content
 
         # Optionally passing instructions here if SDK allows, but prompt is strictly user msg.
-        await session.send(MessageOptions(prompt=injected_message))
+        # 🛡️ Session Auto-Recovery: If the Copilot SDK subprocess crashes (OSError / BrokenPipe),
+        # we transparently invalidate the dead session and retry once with a new session.
+        async def send_with_recovery():
+            nonlocal session, wrapper, done_event, turn_data
+            try:
+                await session.send(MessageOptions(prompt=injected_message))
+                await done_event.wait()
+                unsubscribe()
+            except (OSError, BrokenPipeError) as pipe_err:
+                print(f"[Orchestrator] ⚠️ SDK pipe/subprocess failure detected: {pipe_err}")
+                print("[Orchestrator] Invalidating broken session and retrying with a fresh one...")
+                unsubscribe()  # Detach the dead event listener
+                
+                # Invalidate the broken session from cache and mapping
+                self.session_manager.invalidate_session(event.session_id, route_config)
+                
+                # Reset turn data for the retry
+                turn_data["assistant_message"] = ""
+                turn_data["tools_used"] = []
+                turn_data["error"] = None
+                done_event.clear()
+                
+                # Create a brand new session
+                new_wrapper = await self.session_manager.get_or_create(event.session_id, route_config, tools=sdk_tools)
+                wrapper = new_wrapper
+                session = new_wrapper.sdk_session
+                
+                # Re-subscribe to events on new session
+                self.session_manager._sessions[event.session_id] = new_wrapper
+                unsubscribe_new = session.on(handle_event)
+                
+                # Retry send
+                print("[Orchestrator] Retrying message on new session...")
+                await session.send(MessageOptions(prompt=injected_message))
+                await done_event.wait()
+                unsubscribe_new()
+                return
+                
+        await send_with_recovery()
         
-        # Wait
-        await done_event.wait()
+        # 🔄 Session History Reset: If the SDK returns 400/invalid_request_body,
+        # it means the session history is too long. Invalidate and retry on a fresh session.
+        error_msg = turn_data.get("error", "") or ""
+        is_history_overflow = (
+            "invalid_request_body" in error_msg or 
+            ("400" in error_msg and not turn_data["assistant_message"])
+        )
+        if is_history_overflow:
+            print(f"[Orchestrator] ⚠️ Session history overflow detected (400). Resetting session...")
+            self.session_manager.invalidate_session(event.session_id, route_config)
+            
+            # Reset turn_data for fresh retry
+            turn_data["assistant_message"] = ""
+            turn_data["tools_used"] = []
+            turn_data["error"] = None
+            done_event.clear()
+            
+            # Create a fresh session
+            new_wrapper = await self.session_manager.get_or_create(event.session_id, route_config, tools=sdk_tools)
+            wrapper = new_wrapper
+            session = new_wrapper.sdk_session
+            unsubscribe_new = session.on(handle_event)
+            
+            # Inform the user the context was cleared  
+            context_cleared_message = (
+                "[Note: 由於對話歷史過長，系統已自動清除歷史並開始新的對話。] \n\n"
+                + injected_message
+            )
+            print("[Orchestrator] Retrying with cleared session history...")
+            await session.send(MessageOptions(prompt=context_cleared_message))
+            await done_event.wait()
+            unsubscribe_new()
         
-        unsubscribe()
         wrapper.turn_count += 1
 
-        # 6. Post-process and Persist Session Summary
-        from datetime import datetime
+        # 6. Post-process and Persist Session Summary to [event_log.json]
+        from datetime import datetime, timedelta
         final_content = turn_data["assistant_message"]
         if "<think>" in final_content:
             final_content = re.sub(r'<think>.*?</think>', '', final_content, flags=re.DOTALL).strip()
         
-        # ── 自動持久化 Session 摘要 ──
+        # ── 自動持久化 Session 摘要到事件紀錄 ──
         if final_content and len(final_content) > 10:
-            session_key = f"session_summary_{event.session_id}"
-            # 抓取回應的一小段作為摘要 (在此可以做得更聰明，比如由 LLM 摘要，但我們先用簡單版)
-            summary_entry = f"[{datetime.now().strftime('%m/%d %H:%M')}] {final_content[:200]}"
-            if len(final_content) > 200:
-                summary_entry += "..."
-                
-            existing_str = memory_data.get(session_key, "")
-            summary_list = [s.strip() for s in existing_str.split("||||") if s.strip()]
-            # 只保留最近 3 輪
-            summary_list = summary_list[-2:] 
-            summary_list.append(summary_entry)
-            
-            memory_data[session_key] = "||||".join(summary_list)
-            
             try:
-                with open(memory_file, 'w', encoding='utf-8') as f:
-                    json.dump(memory_data, f, ensure_ascii=False, indent=2)
-                print(f"[Orchestrator] Session summary persisted for {event.session_id}")
+                events_file = os.path.join(storage_path, "event_log.json")
+                events_data = []
+                if os.path.exists(events_file):
+                    with open(events_file, 'r', encoding='utf-8') as f:
+                        events_data = json.load(f)
+                        if not isinstance(events_data, list):
+                            events_data = []
+
+                # Create summary entry
+                summary_text = final_content[:200]
+                if len(final_content) > 200:
+                    summary_text += "..."
+                
+                new_entry = {
+                    "timestamp": datetime.now().isoformat(),
+                    "key": f"session_summary_{event.session_id}",
+                    "value": summary_text
+                }
+                events_data.append(new_entry)
+
+                # Cleanup: Max 50, Max 7 days
+                threshold = datetime.now() - timedelta(days=7)
+                filtered_events = []
+                for e in events_data:
+                    try:
+                        ts = datetime.fromisoformat(e.get("timestamp", ""))
+                        if ts > threshold:
+                            filtered_events.append(e)
+                    except:
+                        filtered_events.append(e) # Keep if timestamp missing
+                
+                # Keep last 50
+                events_data = filtered_events[-50:]
+
+                with open(events_file, 'w', encoding='utf-8') as f:
+                    json.dump(events_data, f, ensure_ascii=False, indent=2)
+                print(f"[Orchestrator] Session summary persisted to event_log.json for {event.session_id}")
             except Exception as e:
                 print(f"[Orchestrator] Failed to save session summary: {e}")
 
