@@ -7,13 +7,14 @@
 - **模組化單體架構**: 清楚的層級劃分：感知層、大腦層、記憶層、技能層 (Skills)。
 - **自我進化機制 (Agentic Self-Evolution)**: Agent 可於運行時偵測能力缺失，自動編寫、測試並部署新技能，無需重啟服務。
 - **元技能系統 (Meta-Skills)**: 提供 `create_tool`、`inspect_tool`、`reload_tools` 等核心開發技能。
-- **雙層記憶持久化 (Dual Memory Persistence)**:
-  - **長期事實 (Facts)** → `storage/local_memory.json`：永久儲存使用者偏好、姓名等個人化資訊。
-  - **近期事件 (Events)** → `storage/event_log.json`：記錄工作摘要與對話進度，具備自動清理機制（最多 50 筆 / 7 天）。
-  - **跨會話接續 (Session Resumption)**：重啟後透過 Session Mapping 無縫銜接上次對話。
+- **本機記憶與事件追蹤 (Dual Memory Resilience)**:
+  - **長期事實 (Facts)** → `storage/local_memory.json`：永久儲存使用者個人化資訊。
+  - **近期事件 (Events)** → `storage/event_log.json`：具有自動清理與單行壓縮注入機制 (Hard Cap 600ch)。
+- **工具索引架構 (Tool Index Architecture)**: 預設僅載入核心工具集，提供輕量化文字索引，支援透過 `activate_tools` 按需升級 Session 載入完整 Schema，徹底解決 Copilot API Payload 超限問題。
 - **安全代碼驗證**: 整合 AST 靜態分析，白名單限制 import 模組，禁止危險函數 (`subprocess`, `eval` 等)。
+- **自動故障修復 (Auto-Recovery)**: 偵測到 SDK 管道中斷或 400 Overflow 時，會自動重置 Session 並重試，提升系統韌性。
 - **依賴鎖定 (Dependency Lockdown)**: 以 `requirements.txt` 鎖定所有套件，防止 Agent 動態安裝未知依賴。
-- **GitOps PR 工作流**: 自動建立 GitHub Branch 並發起 PR，實現人類在環 (Human-in-the-loop) 的代碼審核。
+- **GitOps PR 工作流 🚧 (規劃中)**: 自動建立 GitHub Branch 並發起 PR，實現人類在環 (Human-in-the-loop) 的代碼審核。
 
 ## 📁 目錄結構
 
@@ -45,6 +46,8 @@ my-assistant/
 | `stock_loader` | 查詢即時與歷史股價 (yfinance) |
 | `google_auth` | Google API OAuth2 認證 |
 | `google_calendar` | 讀寫 Google 行事曆事件 |
+| `activate_tools` | 動態激活/載入指定類別的工具 |
+| `schedule_reminder` | 管理定期提醒任務 (支援 once, daily, weekly, yearly) |
 | `send_telegram_buttons` | 在 Telegram 發送 Inline 按鈕 |
 | `local_memory` | 讀寫本機長期記憶與事件紀錄 |
 
@@ -60,7 +63,7 @@ cp .env.example .env
 
 必填變數：
 - `COPILOT_GITHUB_TOKEN`: GitHub Token (需具備 `repo` 與 Copilot 相關權限)。
-- `GITHUB_REPO_NAME`: 持久化與 PR 的目標儲存庫 (格式: `owner/repo`)。
+- `GITHUB_REPO_NAME`: PR 目標儲存庫 (格式: `owner/repo`)。**選填** (GitOps PR 功能實作後才需要)。
 - `TELEGRAM_BOT_TOKEN`: 用於啟動 Telegram Bot (選填)。設定後自動啟動，並透過 Session Mapping 實現無縫的會話接續。
 
 ### 2. 安裝
@@ -126,7 +129,7 @@ docker-compose up --build
 1. **偵測缺失**: 模型發現無法完成任務。
 2. **自動開發**: 模型呼叫 `create_tool` 寫入程式碼（經 AST 驗證，Import 白名單保護）。
 3. **熱重載**: 模型呼叫 `reload_tools` 或透過 API `POST /skills/reload` 啟動新功能。
-4. **回饋碼庫**: 模型呼叫 `submit_tool_pr` 提交 PR 給人類審核。
+4. **回饋碼庫 🚧 (規劃中)**: 模型呼叫 `submit_tool_pr` 提交 PR 給人類審核。
 
 ## 🧠 記憶系統架構
 
@@ -147,6 +150,39 @@ local_memory.json  ←──  local_memory tool (type: fact)
               Orchestrator → Copilot SDK
                  (User Message 僅含純粹對話，不累積 Context)
 ```
+
+## 🧩 代理人邏輯鏈 (Agent Logic Chain)
+
+下圖展示了從接收訊息到完成任務的完整處理流程：
+
+```mermaid
+graph TD
+    A[感知層 Perception] -->|AgentEvent| B[網關 Gateway]
+    B -->|1. Route| C[意圖路由器 Router]
+    C -->|RouteConfig| D[大腦層 Orchestrator]
+    
+    subgraph Execution_Loop [大腦執行循環]
+        D -->|2. Index Lookup| E[查找文字工具索引 Catalog]
+        E -->|3. Context Injection| F[記憶壓縮注入 System Prompt]
+        F -->|4. Get Session| G[Session Manager / SDK]
+        G -->|5. Send Message| H{模型決策}
+        H -->|Tool Call| I[呼叫技能工具]
+        I -->|Tool Result| G
+        H -->|Inactive Tool| J[呼叫 activate_tools 升級]
+        J -->|Signal| D
+        H -->|Assistant Message| K[串流回傳使用者]
+    end
+    
+    I -->|5. Auto-Persist| J[更新事件紀錄 event_log.json]
+    J --> K[工作階段結束 / 等待下一次輸入]
+```
+
+### 流程說明：
+1. **意圖路由 (Routing)**：判斷使用者意圖並選取最適模型與初始 System Prompt。
+2. **記憶注入 (Context Injection)**：在每一輪對話開始前，將「長期事實 (Facts)」與「近期事件 (Events)」動態合併至 System Prompt 中。
+3. **會話管理 (Session Management)**：透過 SDK 的 `mode=replace` 機制更新指令，確保對話歷史不會包含重複的背景資訊。
+4. **遞迴調用 (Reasoning Loop)**：模型根據目前的 Context 決定是要直接回覆，還是需要呼叫工具（如網頁搜尋、寫入記憶）。
+5. **自我持久化 (Persistence)**：對話結束後，系統自動摘要本次互動的核心內容並寫入 `event_log.json`。
 
 ---
 Developed with ❤️ for AI Agent research.

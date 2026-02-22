@@ -73,6 +73,12 @@ class ToolRegistry:
         except Exception as e:
             return f"schema validation error: {e}"
 
+    # Define core tools that are registered via DI or specific static logic
+    CORE_TOOL_NAMES = {
+        "create_tool", "delegate_to_mechanic", "reload_tools",
+        "google_auth", "task_status", "cancel_task"
+    }
+
     def _load_from_directory(self, dir_path: Path, prefix: str):
         """Common scanning logic with namespace isolation via prefix."""
         if not dir_path.exists():
@@ -109,24 +115,20 @@ class ToolRegistry:
                         if isinstance(obj, type) and issubclass(obj, BaseTool) and obj is not BaseTool:
                             try:
                                 # We need to check if an instance already exists to avoid overwriting DI-injected tools
-                                # But we need the name first. We can inspect the class or try dummy instantiate.
-                                # Since we use BaseTool subclasses, they usually have 'name' as a property.
                                 temp_tool = obj.__new__(obj)
                                 tool_name = getattr(temp_tool, "name", None)
                                 
+                                if tool_name and tool_name in self.CORE_TOOL_NAMES:
+                                    # 如果是核心工具（由 DI 注入或特定的靜態邏輯處理）則跳過自動載入
+                                    print(f"Tool '{tool_name}' is a core tool, skipping auto-load from {f.name}")
+                                    continue
+                                
                                 if tool_name and tool_name in self._tools:
-                                    # 如果是 DI 注入的核心工具（不在掃描目錄中）就跳過
-                                    # 但如果只是舊版工具被重新編譯，我們應該要允許覆蓋
-                                    if tool_name in ["create_tool", "delegate_to_mechanic", "reload_tools", "task_status", "cancel_task"]:
-                                        print(f"Tool '{tool_name}' is a DI core tool, skipping auto-load from {f.name}")
-                                        continue
-                                    else:
-                                        print(f"Tool '{tool_name}' already exists, overwriting with new version from {f.name}")
+                                    print(f"Tool '{tool_name}' already exists, overwriting with new version from {f.name}")
 
                                 tool_instance = obj()
                                 
                                 # 🛡️ Schema Validation: Reject tools with invalid JSON schemas before they cause API 400 errors.
-                                # Common issues: array without 'items', object without 'properties'.
                                 schema_error = self._validate_tool_schema(tool_instance)
                                 if schema_error:
                                     print(f"⚠️ Schema validation failed for '{tool_instance.name}' from {f.name}: {schema_error}")
@@ -165,8 +167,7 @@ class ToolRegistry:
         async with self._lock:
             print("Refreshing tools...")
             # 1. Clear current tools, but preserve DI core tools
-            di_core_names = ["create_tool", "delegate_to_mechanic", "reload_tools", "google_auth", "task_status", "cancel_task"]
-            preserved_tools = {name: self._tools[name] for name in di_core_names if name in self._tools}
+            preserved_tools = {name: self._tools[name] for name in self.CORE_TOOL_NAMES if name in self._tools}
             self._tools.clear()
             self._tools.update(preserved_tools)
             # 2. Reload

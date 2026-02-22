@@ -9,6 +9,7 @@ class AgentRole:
     description: str
     system_prompt: Optional[str] = None  # None means use Model Native Behavior
     allowed_tools: List[str] = field(default_factory=list)
+    allowed_categories: set = field(default_factory=set)  # New: Filter by category
     temperature: float = 0.6
 
 class RoleRegistry:
@@ -32,13 +33,12 @@ class RoleRegistry:
             "9. **【Telegram 按鈕優先 - 嚴格強制】** 你是透過 Telegram Bot 與使用者溝通。\n"
             "   - **任何**需要使用者確認或選擇的情況（例如「確認/取消」、「是/否」、「選項 A/B/C」），你**必須**先呼叫 `send_telegram_buttons` 工具傳送按鈕。\n"
             "   - **完全禁止**用文字要求使用者手動輸入選項（如「請回覆是或否」、「請選 A/B/C」）。\n"
-            "   - 按鈕的 `callback_data` 應為你能識別的完整指令（如「確認建立行事曆事件」、「取消」）。\n"
+            "   - 按鈕的 `callback_data`應為你能識別的完整指令（如「確認建立行事曆事件」、「取消」）。\n"
             "</CRITICAL_DIRECTIVES>"
         ),
         temperature=0.7,
-        # allowed_tools 為空代表它擁有存取 Registry 內所有工具的權限，
-        # 這樣當 Mechanic 建立新工具並 Reload 後，SUPERVISOR 才能第一時間看見並使用。
-        allowed_tools=[]
+        allowed_tools=[],
+        allowed_categories={"system", "memory", "telegram_ui"}  # Filter by core categories
     )
     
     CODER_GENERAL = AgentRole(

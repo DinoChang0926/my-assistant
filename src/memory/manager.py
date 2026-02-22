@@ -171,6 +171,21 @@ class SessionManager:
             
         print(f"[SessionManager] Session invalidated for {namespaced} — will create fresh session on retry.")
 
+    def soft_invalidate(self, session_id: str, route_config=None):
+        """
+        Soft invalidation: only clears in-memory cache.
+        The UUID in session_mapping.json is preserved so the session can be
+        resumed on the next call. Use this for temporary rebuilds (e.g., pipe errors)
+        that should NOT destroy the user's conversation history.
+        """
+        role_id = route_config.role.role_id if (route_config and route_config.role) else "default"
+        namespaced = f"{session_id}_{role_id}"
+
+        self._sessions.pop(namespaced, None)
+        self._sessions.pop(session_id, None)
+
+        print(f"[SessionManager] Session soft-invalidated for {namespaced} — UUID preserved on disk, will resume on next call.")
+
     async def cleanup_all(self):
         # We don't want to destroy sessions on exit if we want persistence!
         # Just clear memory references.

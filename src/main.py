@@ -14,6 +14,7 @@ from src.tools.registry import ToolRegistry
 from src.perception.gateway import UnifiedGateway
 from src.perception import rest_api
 from src.perception.telegram_bot import TelegramBot
+from src.perception.scheduler import SchedulerService
 import asyncio
 
 # Define lifespan context manager
@@ -78,6 +79,11 @@ async def lifespan(app: FastAPI):
             telegram_bot = TelegramBot(gateway)
             await telegram_bot.start_bot()
             print("Telegram Bot started in main event loop.")
+            
+            # 5. Initialize & Start Scheduler
+            scheduler = SchedulerService(telegram_bot)
+            await scheduler.start()
+            print("Scheduler Service started.")
         
         print("AI Agent Components Initialized.")
         
@@ -94,6 +100,9 @@ async def lifespan(app: FastAPI):
     try:
         if telegram_bot:
             await telegram_bot.stop()
+        
+        if 'scheduler' in locals() and scheduler:
+            await scheduler.stop()
             
         await session_manager.cleanup_all()
         if hasattr(client, 'stop'):
