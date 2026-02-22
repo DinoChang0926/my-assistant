@@ -6,12 +6,17 @@ class DelegateToMechanicTool(BaseTool):
     允許主助理將開發新工具、系統重構等進階需求委派給專屬的 EVOLUTION_MECHANIC 子助理。
     """
     
-    def __init__(self, orchestrator=None):
+    def __init__(self, orchestrator=None, task_manager=None):
         self.orchestrator = orchestrator
+        self.task_manager = task_manager
 
     @property
     def name(self) -> str:
         return "delegate_to_mechanic"
+
+    @property
+    def category(self) -> str:
+        return "system"
 
     @property
     def description(self) -> str:
@@ -41,8 +46,24 @@ class DelegateToMechanicTool(BaseTool):
         if not self.orchestrator:
              return {"status": "error", "message": "Orchestrator not injected into DelegateToMechanicTool."}
 
-        # 準備將請求發送給 EVOLUTION_MECHANIC
-        print(f"[Delegate] Handing over task to EVOLUTION_MECHANIC: {instruction[:50]}...")
+        # 生成任務 ID
+        import uuid
+        task_id = f"task_{str(uuid.uuid4())[:8]}"
+        
+        from src.brain.task_manager import TaskRecord
+        from datetime import datetime
+        
+        task_record = TaskRecord(
+            id=task_id,
+            instruction=instruction,
+            status="pending",
+            started_at=datetime.now()
+        )
+        
+        if self.task_manager:
+            await self.task_manager.register(task_record)
+
+        print(f"[Delegate] Handing over task {task_id} to EVOLUTION_MECHANIC: {instruction[:50]}...")
         
         from src.core.roles import RoleRegistry
         from src.core.interfaces import RouteConfig
@@ -61,7 +82,6 @@ class DelegateToMechanicTool(BaseTool):
         status_callback = kwargs.get("status_callback")
         
         # 建立一個虛擬的委派事件
-        # 我們使用一個固定的 Session ID 來維持 Mechanic 的對話上下文
         delegate_instruction_payload = (
             f"Master 要求你執行以下任務：\n{instruction}\n\n"
             f"🛑 [CRITICAL WARNING] 🛑\n"
@@ -70,9 +90,7 @@ class DelegateToMechanicTool(BaseTool):
             f"3. **[MVP 優先]**：請務必以 MVP (最小可行性產品) 為開發首要考量，先求有、求可行，禁止在首版過度設計或加入非核心的繁雜功能。"
         )
         
-        import uuid
-        from src.core.events import InputSource
-        
+        from src.core.events import InputSource, AgentEvent
         delegate_event = AgentEvent(
             event_id=str(uuid.uuid4()),
             source=InputSource.API,
@@ -83,14 +101,25 @@ class DelegateToMechanicTool(BaseTool):
         async def background_task():
             import asyncio
             try:
+                if self.task_manager:
+                    await self.task_manager.update_status(task_id, "running")
+
                 # 提示使用者目前正在背景思考中
                 if status_callback:
-                    await status_callback("⚙️ [系統部] 技工已收到開發規格書，正在為您背景建立/修改技能中，請稍候...(這通常需要一分鐘，您隨時可繼續傳送其他訊息)")
+                    await status_callback(f"⚙️ [系統部] 技工已收到任務 {task_id}，正在背景開發中，請稍候...")
                     
-                print("[Delegate] Background task started for EVOLUTION_MECHANIC.")
+                print(f"[Delegate] Background task {task_id} started.")
                 response = await self.orchestrator.execute(delegate_event, route_config)
                 
+                # 技工完成時，可能以工具呼叫結束（沒有文字回應），content 為空
+                # 此時從工具使用紀錄中摘取 fallback 摘要
                 safe_response = response.content
+                if not safe_response and response.tool_calls:
+                    tools_used = [t.get("name", "unknown") for t in response.tool_calls]
+                    safe_response = f"技工已使用以下工具完成開發：{', '.join(tools_used)}"
+                elif not safe_response:
+                    safe_response = "技工已完成任務（無文字回應）"
+                    
                 if len(safe_response) > 500:
                     safe_response = safe_response[:500] + "\n...(技術細節已隱藏)"
                     
@@ -106,19 +135,35 @@ class DelegateToMechanicTool(BaseTool):
                     key="latest_mechanic_update",
                     value=f"背景工程師剛完成了開發，成果摘要: {safe_response[:100]}"
                 )
-                print(f"[Delegate] Background task completed and saved to memory.")
+                print(f"[Delegate] Background task {task_id} completed and saved to memory.")
+                if self.task_manager:
+                    await self.task_manager.update_status(task_id, "done", result=safe_response)
+            except asyncio.CancelledError:
+                print(f"[Delegate] Background task {task_id} was CANCELLED.")
+                if self.task_manager:
+                    await self.task_manager.update_status(task_id, "cancelled")
             except Exception as e:
                 error_msg = f"委派任務背景執行時發生錯誤: {str(e)}"
                 print(f"[Delegate] Error: {error_msg}")
+                if self.task_manager:
+                    await self.task_manager.update_status(task_id, "error", error=error_msg)
                 if status_callback:
                     await status_callback(f"❌ [系統部] 工程師開發過程中摔跤了：{error_msg}")
 
         # 放進背景執行
         import asyncio
-        asyncio.create_task(background_task())
+        loop = asyncio.get_event_loop()
+        task = loop.create_task(background_task())
+        
+        if self.task_manager:
+            # 取得目前的 TaskRecord 並更新 asyncio_task
+            t_record = await self.task_manager.get(task_id)
+            if t_record:
+                t_record.asyncio_task = task
         
         # 立即回報給主助理 (不阻塞)
         return {
             "status": "success",
-            "message": "已成功將任務委派給背景技工。任務將在一分鐘內自動於背景處理完畢。\n[CRITICAL]: 請回覆使用者「已發包，背景工程師正在處理，預計 1~2 分鐘內完成，系統會自動推播通知」。絕對不要對使用者編造不實的幾天或幾小時工期！使用者若詢問進度，告訴他還在趕工即可，絕對不要重複發包！"
+            "task_id": task_id,
+            "message": f"已成功將任務委派給背景技工 (ID: {task_id})。任務將在一分鐘內自動於背景處理完畢。\n[CRITICAL]: 請回覆使用者「已發包，任務ID為 {task_id}，預計 1~2 分鐘內完成，系統會自動推播通知」。絕對不要對使用者編造不實的幾天或幾小時工期！使用者若詢問進度，告訴他還在趕工即可，絕對不要重複發包！"
         }

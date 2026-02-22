@@ -11,6 +11,7 @@ class LocalMemoryTool(BaseTool):
     """
     
     name: str = "local_memory"
+    category: str = "memory"
     description: str = (
         "儲存與讀取長期記憶的工具。當使用者要求你「記住」某件事，或你需要記錄跨對話的偏好設定時使用。\n"
         "支援的操作(action)：\n"

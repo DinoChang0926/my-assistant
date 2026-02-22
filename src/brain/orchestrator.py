@@ -79,8 +79,20 @@ class TaskOrchestrator:
             ))
         
         # 1.5 Inject Skill List into System Prompt
-        # This ensures the Agent knows what it can do BEFORE it tries.
-        skill_list_str = "\n".join([f"- {t.name}: {t.description}" for t in base_tools])
+        # Grouping by category to show clear architecture to AI
+        categories = {}
+        for t in base_tools:
+            cat = getattr(t, 'category', 'general')
+            if cat not in categories:
+                categories[cat] = []
+            categories[cat].append(f"  - {t.name}: {t.description}")
+        
+        skill_list_groups = []
+        for cat, skills in sorted(categories.items()):
+            group_str = f"## [{cat.upper()}]\n" + "\n".join(skills)
+            skill_list_groups.append(group_str)
+        
+        skill_list_str = "\n\n".join(skill_list_groups)
         if not skill_list_str:
             skill_list_str = "(No unlocked skills available, please use create_tool to create one)"
 

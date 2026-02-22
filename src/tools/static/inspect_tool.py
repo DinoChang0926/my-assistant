@@ -11,6 +11,10 @@ class InspectToolTool(BaseTool):
         return "inspect_tool"
 
     @property
+    def category(self) -> str:
+        return "diagnostic"
+
+    @property
     def description(self) -> str:
         return "讀取現有工具的 Python 原始碼。當需要修改、優化或學習現有工具實作時使用。"
 

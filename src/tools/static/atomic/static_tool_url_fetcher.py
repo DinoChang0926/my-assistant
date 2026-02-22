@@ -8,13 +8,9 @@ class URLFetcherTool(BaseTool):
     抓取網頁內容並提取純文字的工具。
     """
 
-    @property
-    def name(self) -> str:
-        return "url_fetcher"
-
-    @property
-    def description(self) -> str:
-        return "抓取指定 URL 的網頁內容。會自動處理 User-Agent 並回傳網頁的純文字內容與標題。"
+    name: str = "url_fetcher"
+    category: str = "web"
+    description: str = "抓取指定 URL 的網頁內容。會自動處理 User-Agent 並回傳網頁的純文字內容與標題。"
 
     @property
     def parameters(self) -> dict:

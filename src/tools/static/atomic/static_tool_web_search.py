@@ -7,13 +7,9 @@ class WebSearchTool(BaseTool):
     使用 DuckDuckGo 進行網頁搜尋的工具。
     """
 
-    @property
-    def name(self) -> str:
-        return "web_search"
-
-    @property
-    def description(self) -> str:
-        return "搜尋網頁內容。輸入查詢字串，回傳包含標題、內容摘要與連結的列表。"
+    name: str = "web_search"
+    category: str = "web"
+    description: str = "搜尋網頁內容。輸入查詢字串，回傳包含標題、內容摘要與連結的列表。"
 
     @property
     def parameters(self) -> dict:

@@ -80,7 +80,7 @@ class ToolRegistry:
                                 if tool_name and tool_name in self._tools:
                                     # 如果是 DI 注入的核心工具（不在掃描目錄中）就跳過
                                     # 但如果只是舊版工具被重新編譯，我們應該要允許覆蓋
-                                    if tool_name in ["create_tool", "delegate_to_mechanic", "reload_tools"]:
+                                    if tool_name in ["create_tool", "delegate_to_mechanic", "reload_tools", "task_status", "cancel_task"]:
                                         print(f"Tool '{tool_name}' is a DI core tool, skipping auto-load from {f.name}")
                                         continue
                                     else:
@@ -119,7 +119,7 @@ class ToolRegistry:
         async with self._lock:
             print("Refreshing tools...")
             # 1. Clear current tools, but preserve DI core tools
-            di_core_names = ["create_tool", "delegate_to_mechanic", "reload_tools", "google_auth"]
+            di_core_names = ["create_tool", "delegate_to_mechanic", "reload_tools", "google_auth", "task_status", "cancel_task"]
             preserved_tools = {name: self._tools[name] for name in di_core_names if name in self._tools}
             self._tools.clear()
             self._tools.update(preserved_tools)

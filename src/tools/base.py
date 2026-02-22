@@ -4,6 +4,11 @@ from src.core.interfaces import AbstractTool
 
 class BaseTool(AbstractTool, ABC):
     """Base class for all tools."""
+
+    @property
+    def category(self) -> str:
+        """Category to group tools (e.g., 'system', 'finance', 'task_control')."""
+        return "general"
     
     @property
     @abstractmethod
@@ -28,6 +33,7 @@ class BaseTool(AbstractTool, ABC):
         """Convert tool definition to GitHub Copilot SDK compatible schema."""
         return {
             "name": self.name,
+            "category": self.category,
             "description": self.description,
             "parameters": self.parameters
         }

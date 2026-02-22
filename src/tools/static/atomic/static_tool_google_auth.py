@@ -11,14 +11,9 @@ class GoogleAuthTool(BaseTool):
     """
     Google API 認證工具，提供 Service 實例供其他工具使用。
     """
-
-    @property
-    def name(self) -> str:
-        return "google_auth"
-
-    @property
-    def description(self) -> str:
-        return "處理 Google API 認證。支援從環境變數或檔案載入憑證，並回傳指定的 API service。"
+    name: str = "google_auth"
+    category: str = "authentication"
+    description: str = "處理 Google API 認證。支援從環境變數或檔案載入憑證，並回傳指定的 API service。"
 
     @property
     def parameters(self) -> dict:

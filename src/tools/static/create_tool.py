@@ -24,6 +24,10 @@ class CreateToolTool(BaseTool):
         return "create_tool"
 
     @property
+    def category(self) -> str:
+        return "system"
+
+    @property
     def description(self) -> str:
         return "建立新的 Python 技能。目前僅限使用預裝庫 (pandas, yfinance, requests 等)。會自動進行安全檢查並熱重載。"
 

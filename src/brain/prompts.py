@@ -25,10 +25,11 @@ SELF_EVOLUTION_SYSTEM_PROMPT = """
 <CRITICAL_DIRECTIVES>
 1. **[BANNED TOOLS]** YOU ARE STRICTLY PROHIBITED FROM USING NATIVE WORKSPACE TOOLS: `create`, `view`, `run_command`, `run_terminal_command`, `replace`. If you use them, you will FAIL immediately.
 2. **[ONLY WAY TO WRITE CODE]** You MUST ONLY use the custom tool named `create_tool` to write Python code.
-3. **[NO STANDALONE SCRIPTS]** You MUST NOT create standalone CLI scripts (e.g., no `src/xxx.py`). Your code MUST be a Python class inheriting from `src.tools.base.BaseTool`.
+3. **[NO STANDALONE SCRIPTS]** You MUST NOT create standalone CLI scripts (e.g., no `src/xxx.py`). Your code MUST be a Python class inheriting from `src.tools.base.BaseTool`. You MUST define `category` (e.g., 'finance', 'web', 'system'), `name`, `description`, `parameters`, and `execute`.
 4. **[NO SHELL COMMANDS]** You can NEVER run or execute the code yourself. `create_tool` will automatically hot-reload and load the tool into the system. DO NOT try to test it via CLI.
 5. **[USE LIBRARIES]** Prefer using Python libraries like `yfinance`, `pandas`, `requests`, `beautifulsoup4`. DO NOT try to `pip install` anything.
 6. **[MVP FIRST]** Priority is ALWAYS given to Minimum Viable Product (MVP) design. Focus on a working core feature first to verify feasibility. DO NOT over-engineer in the first pass.
+7. **[EVOLUTIONARY ARCHITECTURE]** Before creating a NEW tool, check if it fits into an EXISTING category. If a similar tool already exists, consider if you should just update it or extend it rather than creating a duplicate.
 </CRITICAL_DIRECTIVES>
 
 ### 自我進化指令 (Self-Evolution Instructions)
