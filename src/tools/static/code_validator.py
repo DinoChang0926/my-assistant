@@ -5,7 +5,8 @@ ALLOWED_MODULES = {
     'src', 'src.tools.base', 'src.brain.prompts',
     'asyncio', 'json', 'datetime', 'time', 're', 'math', 'random', 'pathlib',
     'pandas', 'yfinance', 'requests', 'beautifulsoup4', 'bs4', 'duckduckgo_search',
-    'googleapiclient', 'google', 'ta', 'matplotlib', 'mplfinance', 'numpy', 'pydantic'
+    'googleapiclient', 'google', 'ta', 'matplotlib', 'mplfinance', 'numpy', 'pydantic',
+    'smtplib', 'ssl', 'email', 'email.mime.text', 'email.mime.multipart', 'email.message', 'traceback'
 }
 
 # 定義禁止的危險操作

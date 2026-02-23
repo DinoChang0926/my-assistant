@@ -65,6 +65,7 @@ class TelegramBot:
 
     async def handle_callback_query(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle Inline Keyboard button clicks."""
+        query = update.callback_query
         try:
             await query.answer()  # Acknowledge the button press (removes loading state)
         except Exception as e:
