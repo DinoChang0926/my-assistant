@@ -61,6 +61,7 @@ class TaskOrchestrator:
                         try:
                             args = invocation.get("arguments", {}) or {}
                             if status_callback: args["status_callback"] = status_callback
+                            args["caller_session_id"] = event.session_id
                             result_data = await t_instance.execute(**args)
                             return {
                                 "resultType": "success",
@@ -176,9 +177,16 @@ class TaskOrchestrator:
         async def send_with_recovery():
             nonlocal session, wrapper, done_event, turn_data, sdk_tools
             try:
-                await session.send(MessageOptions(prompt=injected_message))
-                await done_event.wait()
-                unsubscribe()
+                try:
+                    # 先發送並加上 timeout 避免死結，發生錯誤時可立刻拋出例外不會被吞沒
+                    await asyncio.wait_for(session.send(MessageOptions(prompt=injected_message)), timeout=30.0)
+                    # 再等待閒置信號
+                    await asyncio.wait_for(done_event.wait(), timeout=120.0)
+                except asyncio.TimeoutError:
+                    print(f"[Orchestrator] ⚠️ Session wait timeout! Forcing release.")
+                    turn_data["error"] = "API 回應逾時"
+                finally:
+                    unsubscribe()
             except (OSError, BrokenPipeError) as pipe_err:
                 print(f"[Orchestrator] ⚠️ SDK pipe failure: {pipe_err}. Soft-resetting session...")
                 unsubscribe()
@@ -191,9 +199,14 @@ class TaskOrchestrator:
                 wrapper = new_wrapper
                 session = new_wrapper.sdk_session
                 unsubscribe_new = session.on(handle_event)
-                await session.send(MessageOptions(prompt=injected_message))
-                await done_event.wait()
-                unsubscribe_new()
+                try:
+                    await asyncio.wait_for(session.send(MessageOptions(prompt=injected_message)), timeout=30.0)
+                    await asyncio.wait_for(done_event.wait(), timeout=120.0)
+                except asyncio.TimeoutError:
+                    print(f"[Orchestrator] ⚠️ Resumed Session wait timeout! Forcing release.")
+                    turn_data["error"] = "重新連線後 API 回應逾時"
+                finally:
+                    unsubscribe_new()
                 
         await send_with_recovery()
         
@@ -203,9 +216,28 @@ class TaskOrchestrator:
             print(f"[Orchestrator] ⚠️ Overflow reset.")
             self.session_manager.invalidate_session(event.session_id, route_config)
             new_wrapper = await self.session_manager.get_or_create(event.session_id, route_config, tools=sdk_tools)
-            context_cleared_message = "[Note: 由於歷史過長，系統已自動重啟。] \n\n" + injected_message
-            await new_wrapper.sdk_session.send(MessageOptions(prompt=context_cleared_message))
-            await done_event.wait()
+            
+            # 清除舊的結束標記與狀態
+            done_event.clear()
+            turn_data["assistant_message"] = ""
+            turn_data["error"] = None
+            turn_data["tools_used"] = []
+            
+            # 重新掛載監聽器並發送清空提示的訊息
+            unsubscribe_new = new_wrapper.sdk_session.on(handle_event)
+            context_cleared_message = "[Note: 由於閒置過久或歷史過長，系統已自動替您重啟全新對話。] \n\n" + injected_message
+            
+            try:
+                await asyncio.wait_for(new_wrapper.sdk_session.send(MessageOptions(prompt=context_cleared_message)), timeout=30.0)
+                await asyncio.wait_for(done_event.wait(), timeout=120.0)
+            except asyncio.TimeoutError:
+                print(f"[Orchestrator] ⚠️ Restarted Session wait timeout! Forcing release.")
+                turn_data["error"] = "伺服器重新準備後逾時無回應"
+            finally:
+                unsubscribe_new()
+            
+            # 重要：將新的 wrapper 取代舊的，確保後續操作（如 turn_count）正常運作
+            wrapper = new_wrapper
         
         wrapper.turn_count += 1
         

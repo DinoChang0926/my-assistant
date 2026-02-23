@@ -12,7 +12,8 @@
   - **近期事件 (Events)** → `storage/event_log.json`：具有自動清理與單行壓縮注入機制 (Hard Cap 600ch)。
 - **工具索引架構 (Tool Index Architecture)**: 預設僅載入核心工具集，提供輕量化文字索引，支援透過 `activate_tools` 按需升級 Session 載入完整 Schema，徹底解決 Copilot API Payload 超限問題。
 - **安全代碼驗證**: 整合 AST 靜態分析，白名單限制 import 模組，禁止危險函數 (`subprocess`, `eval` 等)。
-- **自動故障修復 (Auto-Recovery)**: 偵測到 SDK 管道中斷或 400 Overflow 時，會自動重置 Session 並重試，提升系統韌性。
+- **自動故障修復 (Auto-Recovery)**: 偵測到 SDK 管道中斷或 400 Overflow 時，會自動支援重置 Session。且針對 400 Reset 加入了 120 秒超時保護與監聽器重綁機制。
+- **異步主動回饋機制 (True Async Feedback)**: 背景委派任務完工後，會透過系統事件主動注入主助理工作階段，由主助理以自然語言推播通知，完全不需使用者輪詢。
 - **依賴鎖定 (Dependency Lockdown)**: 以 `requirements.txt` 鎖定所有套件，防止 Agent 動態安裝未知依賴。
 - **GitOps PR 工作流 🚧 (規劃中)**: 自動建立 GitHub Branch 並發起 PR，實現人類在環 (Human-in-the-loop) 的代碼審核。
 
@@ -127,9 +128,11 @@ docker-compose up --build
 ## 🛠️ 自我進化工作流 (Evolution Flow)
 
 1. **偵測缺失**: 模型發現無法完成任務。
-2. **自動開發**: 模型呼叫 `create_tool` 寫入程式碼（經 AST 驗證，Import 白名單保護）。
-3. **熱重載**: 模型呼叫 `reload_tools` 或透過 API `POST /skills/reload` 啟動新功能。
-4. **回饋碼庫 🚧 (規劃中)**: 模型呼叫 `submit_tool_pr` 提交 PR 給人類審核。
+2. **自動開發**: 模型呼叫 `delegate_to_mechanic` 進行發包（Supervisor 立即恢復反應）。
+3. **背景作業**: 背景技工建立專屬 Session 進行開發與自我修正。
+4. **主動回報**: 完工後自動合成 `SYSTEM` 事件注入 Supervisor Session，主助理主動向使用者推播「人話」報告。
+5. **熱重載**: 系統自動熱重載新工具。
+6. **回饋碼庫 🚧 (規劃中)**: 模型呼叫 `submit_tool_pr` 提交 PR 給人類審核。
 
 ## 🧠 記憶系統架構
 
@@ -178,11 +181,56 @@ graph TD
 ```
 
 ### 流程說明：
-1. **意圖路由 (Routing)**：判斷使用者意圖並選取最適模型與初始 System Prompt。
-2. **記憶注入 (Context Injection)**：在每一輪對話開始前，將「長期事實 (Facts)」與「近期事件 (Events)」動態合併至 System Prompt 中。
-3. **會話管理 (Session Management)**：透過 SDK 的 `mode=replace` 機制更新指令，確保對話歷史不會包含重複的背景資訊。
-4. **遞迴調用 (Reasoning Loop)**：模型根據目前的 Context 決定是要直接回覆，還是需要呼叫工具（如網頁搜尋、寫入記憶）。
-5. **自我持久化 (Persistence)**：對話結束後，系統自動摘要本次互動的核心內容並寫入 `event_log.json`。
+  1. **實質異步發包 (Non-Blocking Dispatch)**：
+     Supervisor 認定需要開發新工具時，使用 `delegate_to_mechanic` 工具建立背景任務（利用 `asyncio.create_task` **並將任務紀錄寫入 class 屬性**，以徹底隔離主執行緒的 `Event Loop` 並避免其被 GC 回收或阻塞）。主對話框瞬間解鎖，並自動回覆「已發包」。
+  2. **雙重極限護盾 (Dual-Timeout Safeguard)**：
+     主循環的 `Orchestrator` 已具備發送與等待的隔離非同步機制：
+     - 若 API 連線本身塞車或卡死，**30 秒**強制切斷，防止連環假性 Timeout（確保不會吞沒連線異常）。
+     - 若執行過久，**120 秒**作為思考極限斷開。
+  3. **背景衝刺與主動推播 (Background Execution & Injection)**：
+     背景工程師在獨立 Workspace (`internal_mechanic_workspace`) 開發完畢後，會「合成一個系統事件 (AgentEvent)」並重新呼叫 Supervisor 所在的使用者 Session。
+  4. **自然對話完工通知 (Humanized Push Notification)**：
+     Supervisor 收到注射進來的系統完工通知後，會以自然口吻產生總結報告，並透過 `status_callback` 直接將內容**推播回 Telegram**。使用者完全無需主動輪詢即可收到完工通知與操作指引。
+  5. **意圖路由 (Routing)**：判斷使用者意圖並選取最適模型與初始 System Prompt。
+  6. **記憶注入 (Context Injection)**：在每一輪對話開始前，將「長期事實 (Facts)」與「近期事件 (Events)」動態合併至 System Prompt 中。
+  7. **會話管理 (Session Management)**：透過 SDK 的 `mode=replace` 機制更新指令，確保對話歷史不會包含重複的背景資訊。
+  8. **遞迴調用 (Reasoning Loop)**：模型根據目前的 Context 決定是要直接回覆，還是需要呼叫工具（如網頁搜尋、寫入記憶）。
+  9. **自我持久化 (Persistence)**：對話結束後，系統自動摘要本次互動的核心內容並寫入 `event_log.json`。
+
+---
+
+## 🗺️ 後續計畫 (Roadmap)
+
+### 工具伺服器分離（MCP Architecture）
+
+> **背景**：隨著動態工具數量增長（50+），將工具 Schema 全部注入 Session 會造成 Token 壓力。計畫將工具層獨立為 [MCP（Model Context Protocol）](https://modelcontextprotocol.io/) 相容的獨立服務。
+
+**目標架構（雙容器 Docker Compose）**：
+
+```
+                    Docker Network
+┌─────────────────────────┐   ┌──────────────────────────┐
+│  assistant-brain        │   │  my-tools (MCP Server)   │
+│  (本 repo)              │──▶│  (獨立 repo)             │
+│  ├─ Orchestrator        │   │  ├─ BaseTool 基類         │
+│  ├─ SessionManager      │   │  ├─ 所有具體工具實作       │
+│  ├─ Telegram Bot        │   │  ├─ 熱重載 /reload        │
+│  └─ Router              │   │  └─ MCP HTTP Endpoint    │
+└─────────────────────────┘   └──────────────────────────┘
+```
+
+**演化路徑**：
+
+| 階段 | 動態工具位置 | 載入方式 |
+|---|---|---|
+| **現在** | `storage/dynamic_tools/` (本 repo) | Python 直接 import |
+| **中期** | `my-tools` repo（獨立部署）| Python import，分離 repo |
+| **長期** | `my-tools` MCP Server | MCP 協定，Copilot SDK 原生支援 |
+
+**Agent 維護方式**：
+- Evolution Mechanic 負責在 `my-tools` repo 中新增/修改工具
+- 工具寫入後呼叫 `reload_tools`，MCP Server 熱重載
+- 主流程 (`my-assistant`) 完全不需要變動
 
 ---
 Developed with ❤️ for AI Agent research.

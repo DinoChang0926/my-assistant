@@ -18,7 +18,9 @@ class SendTelegramButtonsTool(BaseTool):
         "- 需要使用者做確認時（例如：「確認/取消」）\n"
         "- 提供多個選項時（例如：「A / B / C」）\n"
         "- 任何情況下，只要原本會要使用者手動輸入 A/B/C 之類的選項\n"
-        "注意：使用者點擊按鈕後，選項文字會當作普通訊息傳回給我處理。"
+        "🚨 **嚴格警告**：Telegram API 限制 callback_data **絕對不可超過 64 Bytes**！\n"
+        "請使用極短的 Action ID（如 `save_smtp`、`cancel`）作為回傳值，**切勿將任何設定檔、長字串或 JSON 塞進按鈕**！\n"
+        "請依賴你自身的對話記憶來理解使用者點擊該短指令時代表的意思。"
     )
 
     @property
@@ -45,7 +47,7 @@ class SendTelegramButtonsTool(BaseTool):
                                 },
                                 "callback_data": {
                                     "type": "string",
-                                    "description": "點擊按鈕後傳回的文字/指令（最多 64 bytes）"
+                                    "description": "點擊按鈕後傳回的精簡指令 (嚴格限制最大 64 Bytes，例如 'action_confirm'，絕對不可塞入 JSON 或過長設定值)"
                                 }
                             },
                             "required": ["text", "callback_data"]
@@ -74,10 +76,12 @@ class SendTelegramButtonsTool(BaseTool):
             for row in buttons_config:
                 btn_row = []
                 for btn in row:
+                    raw_cb = btn.get("callback_data", btn.get("text", ""))
+                    safe_cb = raw_cb.encode('utf-8')[:64].decode('utf-8', 'ignore') if isinstance(raw_cb, str) else str(raw_cb)[:64]
                     btn_row.append(
                         InlineKeyboardButton(
-                            text=btn.get("text", ""),
-                            callback_data=btn.get("callback_data", btn.get("text", ""))
+                            text=str(btn.get("text", ""))[:32],
+                            callback_data=safe_cb
                         )
                     )
                 keyboard.append(btn_row)

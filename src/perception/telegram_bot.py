@@ -65,9 +65,11 @@ class TelegramBot:
 
     async def handle_callback_query(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle Inline Keyboard button clicks."""
-        query = update.callback_query
-        await query.answer()  # Acknowledge the button press (removes loading state)
-        
+        try:
+            await query.answer()  # Acknowledge the button press (removes loading state)
+        except Exception as e:
+            logger.warning(f"Failed to answer callback query (could be a timeout): {e}")
+
         chat_id = update.effective_chat.id
         callback_data = query.data
         session_id = f"telegram_{chat_id}"
@@ -79,52 +81,71 @@ class TelegramBot:
         safe_original = html.escape(original_text)
         safe_callback = html.escape(callback_data)
         
-        await query.edit_message_text(
-            text=f"{safe_original}\n\n✅ 你選擇了：<b>{safe_callback}</b>",
-            parse_mode="HTML",
-            reply_markup=None  # Remove the keyboard after selection
-        )
+        try:
+            await query.edit_message_text(
+                text=f"{safe_original}\n\n✅ 你選擇了：<b>{safe_callback}</b>",
+                parse_mode="HTML",
+                reply_markup=None  # Remove the keyboard after selection
+            )
+        except Exception as e:
+            logger.warning(f"Failed to edit message text: {e}")
         
-        # Send the selected option to the AI agent as if user typed it
+        # 避免 Callback data 過長導致 LLM 解析失敗或 400
+        safe_pass_data = callback_data[:200] + "..." if len(callback_data) > 200 else callback_data
+        
+        # Send the selected option to the AI agent as if user typed it, but with explicit system hint
         event = AgentEvent(
             event_id=str(uuid.uuid4()),
             source=InputSource.TELEGRAM,
             session_id=session_id,
-            content=callback_data
+            content=f"[System Reminder: User clicked an inline button with payload/value: '{safe_pass_data}'. Please process this selection and respond to the user immediately.]"
         )
         
         async def send_status(msg: str):
             await self._send_message_or_buttons(context, chat_id, msg)
         
         try:
-            await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+            try:
+                await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+            except Exception as e:
+                logger.warning(f"Failed to send typing action: {e}")
             response = await self.gateway.process(event, status_callback=send_status)
             reply_content = response.content if response.content and response.content.strip() else None
             if reply_content:
                 await self._send_message_or_buttons(context, chat_id, reply_content)
+            elif not response.tool_calls:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="⚠️ AI 模型處理按鈕後未回傳任何內容。如果持續卡頓請重試。"
+                )
         except Exception as e:
             logger.error(f"Error processing callback query: {e}")
-            await context.bot.send_message(chat_id=chat_id, text=f"⚠️ 處理選項時發生錯誤：{str(e)[:200]}")
+            try:
+                await context.bot.send_message(chat_id=chat_id, text=f"⚠️ 處理選項時發生錯誤：{str(e)[:200]}")
+            except Exception as ex:
+                logger.error(f"Could not send error message to telegram: {ex}")
 
     async def _send_message_or_buttons(self, context, chat_id: int, msg: str):
         """智慧傳送：偵測是否為按鈕 payload，若是則傳送 Inline Keyboard；否則傳送普通訊息。"""
-        # 偵測特殊按鈕 payload
-        if msg.strip().startswith('{') and '"__type": "inline_keyboard"' in msg:
+        # 偵測特殊按鈕 payload - AI 的回覆有時會夾帶額外空白或換行
+        msg_strip = msg.strip()
+        if msg_strip.startswith('{') and '"__type": "inline_keyboard"' in msg_strip:
             try:
-                payload = json.loads(msg)
+                payload = json.loads(msg_strip)
                 keyboard = []
                 for row in payload.get("keyboard", []):
-                    btn_row = [
-                        InlineKeyboardButton(text=b["text"], callback_data=b.get("callback_data", b["text"]))
-                        for b in row
-                    ]
+                    btn_row = []
+                    for b in row:
+                        raw_cb = b.get("callback_data", b["text"])
+                        # Telegram API 嚴格限制 callback_data 最長 64 bytes，這裡做安全截斷
+                        safe_cb = raw_cb.encode('utf-8')[:64].decode('utf-8', 'ignore') if isinstance(raw_cb, str) else str(raw_cb)[:64]
+                        btn_row.append(InlineKeyboardButton(text=str(b.get("text", "Button"))[:32], callback_data=safe_cb))
                     keyboard.append(btn_row)
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 await context.bot.send_message(
                     chat_id=chat_id,
                     text=payload.get("text", "請選擇："),
-                    reply_markup=reply_markup,
-                    parse_mode="Markdown"
+                    reply_markup=reply_markup
                 )
                 return
             except Exception as e:
@@ -175,7 +196,10 @@ class TelegramBot:
             async def send_status(msg: str):
                 await self._send_message_or_buttons(context, chat_id, msg)
 
-            await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+            try:
+                await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+            except Exception as e:
+                logger.warning(f"Failed to send typing action: {e}")
             response = await self.gateway.process(event, status_callback=send_status)
             
             # Guard against empty response
@@ -189,9 +213,12 @@ class TelegramBot:
             import traceback
             err_detail = traceback.format_exc()
             logger.error(f"Error handling document: {err_detail}")
-            await update.message.reply_text(
-                f"⚠️ 處理文件時發生錯誤：\n`{type(e).__name__}: {e}`\n\n請檢查日誌或告知我要如何處理。"
-            )
+            try:
+                await update.message.reply_text(
+                    f"⚠️ 處理文件時發生錯誤：\n`{type(e).__name__}: {e}`\n\n請檢查日誌或告知我要如何處理。"
+                )
+            except Exception as ex:
+                logger.error(f"Could not send error message to telegram: {ex}")
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"Raw Update received: {update}")
@@ -222,7 +249,10 @@ class TelegramBot:
         # Send to Gateway
         try:
             # Show "typing..." status
-            await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+            try:
+                await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+            except Exception as e:
+                logger.warning(f"Failed to send typing action: {e}")
             
             response = await self.gateway.process(event, status_callback=send_status)
             
@@ -230,11 +260,12 @@ class TelegramBot:
             reply_content = response.content if response.content and response.content.strip() else None
             if reply_content:
                 await self._send_message_or_buttons(context, chat_id, reply_content)
-            else:
+            elif not response.tool_calls:
+                # 只有在「沒有文字」且「沒有呼叫工具」的情況下，才視為真正的沒有回應
                 await context.bot.send_message(
                     chat_id=chat_id,
                     text="⚠️ AI 模型沒有回傳任何內容（可能是請求內容過大或 API 限制）。\n"
-                    "如果這個問題持續出現，請告知我，我可以嘗試縮減對話上下文。"
+                    "如果這個問題持續出現，請點擊重啟或是告知我。"
                 )
             
         except Exception as e:
@@ -243,9 +274,12 @@ class TelegramBot:
             logger.error(f"Error processing Telegram message: {err_detail}")
             # 主動回報錯誤細節，讓使用者與助理可以協作除錯
             short_err = html.escape(str(e)[:300])
-            await update.message.reply_html(
-                f"⚠️ 我遇到了一個錯誤，需要請你協助：\n\n"
-                f"<b>錯誤類型</b>：<code>{type(e).__name__}</code>\n"
-                f"<b>訊息</b>：{short_err}\n\n"
-                f"如果你覺得這是系統問題，可以叫我查看 logs 或重新啟動相關服務。"
-            )
+            try:
+                await update.message.reply_html(
+                    f"⚠️ 我遇到了一個錯誤，需要請你協助：\n\n"
+                    f"<b>錯誤類型</b>：<code>{type(e).__name__}</code>\n"
+                    f"<b>訊息</b>：{short_err}\n\n"
+                    f"如果你覺得這是系統問題，可以叫我查看 logs 或重新啟動相關服務。"
+                )
+            except Exception as ex:
+                logger.error(f"Could not send error message to telegram: {ex}")
