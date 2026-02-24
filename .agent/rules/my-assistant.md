@@ -24,3 +24,8 @@ trigger: always_on
 - **衍生狀態一致性守則**：當 `orchestrator.py` 的任何程式碼路徑中更新了 `sdk_tools`（例如 Session 升級、重試），**必須**同步重新計算所有由其衍生的狀態，特別是 `route_config.system_prompt` 中的 **Tool Catalog**。禁止在未更新衍生狀態的情況下重建 Session，以防止 AI 產生重複激活的循環。
 - **SUPERVISOR Session 不可侵犯原則**：`telegram_6673258916_supervisor` 等主流程 Session 在任何架構升級或優化改動中**必須保持持久性**。Copilot SDK 的 Session 在工具集設定後即鎖定，無法動態修改。任何需要擴充工具的情境，**唯一合法路徑**是透過 `delegate_to_mechanic` 委派給 Sub-agent，絕不允許在 SUPERVISOR 自身重建 Session 以換取工具。違反此原則會導致使用者對話記憶永久消失。
 - **事件監聽回收**：確保所有 SDK 事件監聽 (session.on) 都在對話結束後正確呼叫 `unsubscribe()`。
+
+# 目錄與檔案收納守則
+
+- **測試集中管理**：所有撰寫的測試程式碼（不論單元測試、整合測試），**必須**統一放置於 `tests/` 目錄下管理，保持專案根目錄整潔。
+- **除錯與專用腳本集中管理**：所有用來臨時除錯、實驗功能或特定任務的獨立腳本（如 `debug_*.py`, `diagnose_*.py` 等），**必須**統一收納於 `scripts/` 目錄內。
