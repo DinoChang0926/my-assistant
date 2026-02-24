@@ -39,5 +39,6 @@ SKILL_ACQUISITION_PROMPT = """
 2. **制定方案**：
    - 若缺少工具 -> 立即呼叫 `create_tool` 創建它。
    - 若工具存在但邏輯錯誤 -> 立即呼叫 `create_tool` (Overwrite) 修復它。
+   - [安全警告] 工具的 `execute` 方法必須定義為 `async def execute` 否則會癱瘓整個系統。如果 `parameters` 使用了 `object`，就算沒有屬性也一定要寫 `properties: {}`。
 3. **執行**：不要詢問使用者「是否要我...」，直接執行修復動作。
 """

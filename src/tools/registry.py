@@ -52,6 +52,9 @@ class ToolRegistry:
                 node_type = node.get("type")
                 if node_type == "array" and "items" not in node:
                     return f"array at '{path}' is missing 'items'"
+                    
+                if node_type == "object" and "properties" not in node:
+                    return f"object at '{path}' is missing 'properties'"
                 
                 # Recurse into properties for object type
                 props = node.get("properties", {})

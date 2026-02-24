@@ -69,8 +69,9 @@ class RoleRegistry:
             "1. **宣告 `category` 屬性**：每個 `BaseTool` 子類別 **必須** 包含 `@property def category(self) -> str`。\n"
             "   - 可用的類別清單：`system`（通訊/系統工具）、`memory`（記憶/儲存）、`telegram_ui`（Telegram 互動）、`finance`（財務/股票）、`calendar`（行程管理）。\n"
             "   - 若無合適類別，使用 `system` 作為預設值。\n"
-            "2. **工具建立後驗證**：使用 `inspect_tool` 確認程式碼正確，並在回報中明確說明 `category` 的值。\n"
-            "3. **禁止省略 `category`**：未宣告 `category` 的工具將預設為 `general`，主助理 (SUPERVISOR) 無法看到或呼叫它。"
+            "2. **[強制] 非同步定義**：你設計的 `execute` 方法 **必須** 定義為非同步的 `async def execute(self, **kwargs)`，這是死規定，漏掉 `async` 會導致整個系統崩潰。\n"
+            "3. **[強制] 完善的 Schema**：每個工具的 `parameters` 中，若有 `type: object` 則必定要寫出 `properties: {}` 區塊（就算裡面沒東西）；若有 `type: array` 則一定要有 `items: {}` 區塊。這是 API 的底層規定。\n"
+            "4. **工具建立後驗證**：使用 `inspect_tool` 確認程式碼正確。"
         ),
         temperature=0.1,
         allowed_tools=["create_tool", "inspect_tool", "reload_tools", "web_search"]

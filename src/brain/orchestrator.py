@@ -1,6 +1,7 @@
 import asyncio
 import re
 import copy
+import logging
 from typing import Any, List, Callable, Awaitable, Optional
 from src.core.events import AgentEvent, AgentResponse
 from src.core.interfaces import RouteConfig
@@ -8,6 +9,8 @@ from src.memory.manager import SessionManager
 from src.tools.registry import ToolRegistry
 from src.brain.prompts import SKILL_ACQUISITION_PROMPT
 from copilot import MessageOptions
+
+logger = logging.getLogger("orchestrator")
 
 class TaskOrchestrator:
     """Coordinates the execution flow between Memory, SDK, and Tools."""
@@ -71,10 +74,16 @@ class TaskOrchestrator:
                             return {"resultType": "failure", "error": str(e)}
                     return handler
 
+                # 🛡️ Defense against "Cannot read properties of undefined (reading 'map')"
+                # The SDK expects 'properties' to exist on 'object' types even if empty.
+                safe_params = copy.deepcopy(tool.parameters) if tool.parameters else {"type": "object"}
+                if safe_params.get("type") == "object" and "properties" not in safe_params:
+                    safe_params["properties"] = {}
+
                 res_sdk_tools.append(Tool(
                     name=tool.name,
                     description=tool.description,
-                    parameters=tool.parameters,
+                    parameters=safe_params,
                     handler=make_handler(tool)
                 ))
             return res_sdk_tools, filtered_base_tools
@@ -101,7 +110,7 @@ class TaskOrchestrator:
                             if "session_summary" not in k and "latest_mechanic" not in k:
                                 memory_parts.append(f"{k}={str(v)[:60]}")
             except Exception as e:
-                print(f"[Orchestrator] Error reading facts: {e}")
+                logger.info(f"[Orchestrator] Error reading facts: {e}")
 
         events_file = os.path.join(storage_path, "event_log.json")
         if os.path.exists(events_file):
@@ -114,7 +123,7 @@ class TaskOrchestrator:
                             val = str(entry.get('value', ''))[:80]
                             memory_parts.append(f"[{ts}]{entry.get('key')}:{val}")
             except Exception as e:
-                print(f"[Orchestrator] Error reading events: {e}")
+                logger.info(f"[Orchestrator] Error reading events: {e}")
 
         if memory_parts:
             compact_memory = "[MEM] " + " | ".join(memory_parts)
@@ -138,6 +147,7 @@ class TaskOrchestrator:
             import logging
             logger = logging.getLogger("orchestrator")
             e_type = event_obj.type.value if hasattr(event_obj.type, 'value') else str(event_obj.type)
+            logger.info(f"[SDK Event Debug] type={e_type}, data={getattr(event_obj, 'data', None)}")
             
             if e_type == "assistant.message":
                 turn_data["assistant_message"] = event_obj.data.content
@@ -173,72 +183,37 @@ class TaskOrchestrator:
         unsubscribe = session.on(handle_event)
         injected_message = event.content
 
-        # 🛡️ Session Auto-Recovery (Pipe Errors Only — No Session Upgrades)
+        # 🛡️ Session Auto-Recovery (Pipe Errors Only)
         async def send_with_recovery():
-            nonlocal session, wrapper, done_event, turn_data, sdk_tools
+            nonlocal session, wrapper, done_event, turn_data
             try:
-                try:
-                    # 先發送並加上 timeout 避免死結，發生錯誤時可立刻拋出例外不會被吞沒
-                    await asyncio.wait_for(session.send(MessageOptions(prompt=injected_message)), timeout=30.0)
-                    # 再等待閒置信號
-                    await asyncio.wait_for(done_event.wait(), timeout=120.0)
-                except asyncio.TimeoutError:
-                    print(f"[Orchestrator] ⚠️ Session wait timeout! Forcing release.")
-                    turn_data["error"] = "API 回應逾時"
-                finally:
-                    unsubscribe()
+                await asyncio.wait_for(session.send(MessageOptions(prompt=injected_message)), timeout=30.0)
+                await asyncio.wait_for(done_event.wait(), timeout=120.0)
+            except asyncio.TimeoutError:
+                logger.info("[Orchestrator] ⚠️ Session wait timeout! Forcing release.")
+                turn_data["error"] = "API 回應逾時"
             except (OSError, BrokenPipeError) as pipe_err:
-                print(f"[Orchestrator] ⚠️ SDK pipe failure: {pipe_err}. Soft-resetting session...")
-                unsubscribe()
+                logger.info(f"[Orchestrator] ⚠️ SDK pipe failure: {pipe_err}. Soft-resetting session...")
                 # 🔄 Soft invalidate: clear memory but keep UUID on disk for resumption
                 self.session_manager.soft_invalidate(event.session_id, route_config)
-                done_event.clear()
-                turn_data["assistant_message"] = ""
-                turn_data["tools_used"] = []
-                new_wrapper = await self.session_manager.get_or_create(event.session_id, route_config, tools=sdk_tools)
-                wrapper = new_wrapper
-                session = new_wrapper.sdk_session
-                unsubscribe_new = session.on(handle_event)
-                try:
-                    await asyncio.wait_for(session.send(MessageOptions(prompt=injected_message)), timeout=30.0)
-                    await asyncio.wait_for(done_event.wait(), timeout=120.0)
-                except asyncio.TimeoutError:
-                    print(f"[Orchestrator] ⚠️ Resumed Session wait timeout! Forcing release.")
-                    turn_data["error"] = "重新連線後 API 回應逾時"
-                finally:
-                    unsubscribe_new()
+                wrapper = await self.session_manager.get_or_create(event.session_id, route_config, tools=sdk_tools)
+                session = wrapper.sdk_session
+                turn_data["error"] = "系統管線異常，已重新啟動服務，請再試一次。"
                 
         await send_with_recovery()
+        unsubscribe()
         
         # 🔄 Session History Reset (400)
-        error_msg = turn_data.get("error", "") or ""
+        error_msg = turn_data.get("error") or ""
         if "invalid_request_body" in error_msg or ("400" in error_msg and not turn_data["assistant_message"]):
-            print(f"[Orchestrator] ⚠️ Overflow reset.")
+            logger.info("[Orchestrator] ⚠️ Overflow reset.")
             self.session_manager.invalidate_session(event.session_id, route_config)
-            new_wrapper = await self.session_manager.get_or_create(event.session_id, route_config, tools=sdk_tools)
+            wrapper = await self.session_manager.get_or_create(event.session_id, route_config, tools=sdk_tools)
             
-            # 清除舊的結束標記與狀態
-            done_event.clear()
-            turn_data["assistant_message"] = ""
+            turn_data["assistant_message"] = "[Note: 由於對話歷史過長，系統已自動為您重啟全新對話，請重新輸入。]"
             turn_data["error"] = None
             turn_data["tools_used"] = []
             
-            # 重新掛載監聽器並發送清空提示的訊息
-            unsubscribe_new = new_wrapper.sdk_session.on(handle_event)
-            context_cleared_message = "[Note: 由於閒置過久或歷史過長，系統已自動替您重啟全新對話。] \n\n" + injected_message
-            
-            try:
-                await asyncio.wait_for(new_wrapper.sdk_session.send(MessageOptions(prompt=context_cleared_message)), timeout=30.0)
-                await asyncio.wait_for(done_event.wait(), timeout=120.0)
-            except asyncio.TimeoutError:
-                print(f"[Orchestrator] ⚠️ Restarted Session wait timeout! Forcing release.")
-                turn_data["error"] = "伺服器重新準備後逾時無回應"
-            finally:
-                unsubscribe_new()
-            
-            # 重要：將新的 wrapper 取代舊的，確保後續操作（如 turn_count）正常運作
-            wrapper = new_wrapper
-        
         wrapper.turn_count += 1
         
         # 6. Post-process

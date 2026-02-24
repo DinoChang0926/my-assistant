@@ -1,9 +1,26 @@
 
 import os
 import sys
+import logging
 import uvicorn
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
+
+# 建立 storage 目錄並設定全域記錄檔，強制開啟 DEBUG 層級
+os.makedirs("storage", exist_ok=True)
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+    handlers=[
+        logging.FileHandler("storage/debug.log", encoding='utf-8', mode='a'),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+# 過濾底層雜訊
+logging.getLogger("httpcore").setLevel(logging.INFO)
+logging.getLogger("httpx").setLevel(logging.INFO)
+logging.getLogger("telegram").setLevel(logging.INFO)
+logging.getLogger("copilot").setLevel(logging.DEBUG)  # 特別開起 SDK 層級如果有的話
 from copilot import CopilotClient
 
 from src.config import settings
