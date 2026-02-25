@@ -51,6 +51,9 @@ my-assistant/
 | `schedule_reminder` | 管理定期提醒任務 (支援 once, daily, weekly, yearly) |
 | `send_telegram_buttons` | 在 Telegram 發送 Inline 按鈕 |
 | `local_memory` | 讀寫本機長期記憶與事件紀錄 |
+| `secret_manager_store` | 安全儲存各種服務或 API 的密碼、Token，支援 Docker 持久化 |
+| `secret_manager_read` | 在需要呼叫外部 API 時，由背景安全抓取憑證值 |
+| `secret_manager_delete` | 從安全儲存庫徹底清除某個憑證 |
 
 ## 🚀 快速開始
 
@@ -124,6 +127,9 @@ docker-compose up --build
 - **`400 invalid_request_body` (CAPIError)**: Session 歷史可能過長或工具 Schema 不合法。
   - *歷史過長*：系統會自動偵測並重置 Session，繼續對話。若要手動處理，可刪除 `storage/session_mapping.json` 強制建立新 Session。
   - *Schema 不合法*：確認動態工具的 `parameters` 中，`array` 型別必須有 `items`，`object` 型別必須有 `properties`。可呼叫 `inspect_tool` 工具或查看 `GET /skills/{name}` 確認格式。
+- **Agent 無法讀取儲存好的憑證 (Secret Manager)**：
+  - 若在 Windows/macOS **本機**執行，憑證將會存放在作業系統的 Credential Manager 內，請檢查 OS 層級管理員 (`keyring` 負責存取)。
+  - 若在 **Docker** 環境執行，Secret Manager 會預設回退使用加密檔案 `.secrets.enc`。如果容器重啟後憑證遺失，請檢查是否有一併掛載 `./storage:/app/storage`，且您的 `.env` 內是否有正確的 `SECRET_MASTER_KEY` (初次啟動時自動生成)。
 
 ## 🛠️ 自我進化工作流 (Evolution Flow)
 

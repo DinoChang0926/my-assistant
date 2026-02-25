@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException
-from typing import Optional
+from typing import Optional, Any
 from pydantic import BaseModel
 from src.core.events import AgentEvent, InputSource, AgentResponse
 from src.perception.gateway import UnifiedGateway
@@ -7,6 +7,8 @@ import uuid
 
 app = FastAPI(title="AI Agent API")
 
+import logging
+logger = logging.getLogger(__name__)
 
 # Dependency Placeholder (will be injected in main.py)
 gateway: UnifiedGateway = None

@@ -93,14 +93,19 @@ async def lifespan(app: FastAPI):
         
         # 4. Initialize Telegram Bot
         if settings.TELEGRAM_BOT_TOKEN:
-            telegram_bot = TelegramBot(gateway)
-            await telegram_bot.start_bot()
-            print("Telegram Bot started in main event loop.")
-            
-            # 5. Initialize & Start Scheduler
-            scheduler = SchedulerService(telegram_bot)
-            await scheduler.start()
-            print("Scheduler Service started.")
+            try:
+                telegram_bot = TelegramBot(gateway)
+                await telegram_bot.start_bot()
+                print("Telegram Bot started in main event loop.")
+                
+                # 5. Initialize & Start Scheduler
+                scheduler = SchedulerService(telegram_bot)
+                await scheduler.start()
+                print("Scheduler Service started.")
+            except Exception as t_err:
+                print(f"⚠️ Telegram Bot failed to start: {t_err}")
+                print("Continuing without Telegram Bot... You can still use the REST API.")
+                telegram_bot = None
         
         print("AI Agent Components Initialized.")
         

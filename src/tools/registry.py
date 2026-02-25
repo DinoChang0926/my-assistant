@@ -79,7 +79,7 @@ class ToolRegistry:
     # Define core tools that are registered via DI or specific static logic
     CORE_TOOL_NAMES = {
         "create_tool", "delegate_to_mechanic", "reload_tools",
-        "google_auth", "task_status", "cancel_task"
+        "task_status", "cancel_task"
     }
 
     def _load_from_directory(self, dir_path: Path, prefix: str):
@@ -99,7 +99,11 @@ class ToolRegistry:
                 continue
             
             # Namespace isolation: dynamic_tool_xxx
-            module_name = f"{prefix}{f.stem}"
+            # 如果檔案已經以 prefix 開頭了，就不要再疊加
+            if f.stem.startswith(prefix):
+                module_name = f.stem
+            else:
+                module_name = f"{prefix}{f.stem}"
             
             try:
                 # Hot Reload: Clear old cache
@@ -141,14 +145,18 @@ class ToolRegistry:
                                 self.register(tool_instance)
                                 loaded_count += 1
                             except Exception as e:
+                                import traceback
                                 print(f"Error instantiating tool {name} from {f.name}: {e}")
+                                traceback.print_exc()
                     
                     if loaded_count > 0:
                         print(f"Loaded {loaded_count} tools from {f.name}")
                         
             except Exception as e:
+                import traceback
                 # 🛡️ Failure Rollback: Rename broken files
-                print(f"Failed to load module {module_name}: {e}")
+                print(f"Failed to load module {module_name} from {f}: {e}")
+                traceback.print_exc()
                 try:
                     broken_path = f.with_suffix(".py.broken")
                     f.rename(broken_path)

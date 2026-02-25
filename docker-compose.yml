@@ -3,11 +3,13 @@ services:
     build: .
     env_file: .env
     volumes:
-      - ./src:/app/src
       - ./storage:/app/storage
     ports:
-      - "8080:8000"
+      - "8081:8000"
     restart: unless-stopped
     # GitHub Copilot SDK might need some env mapping if it expects specific keys
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     environment:
       - GITHUB_TOKEN=${COPILOT_GITHUB_TOKEN}
