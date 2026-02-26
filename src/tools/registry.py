@@ -171,7 +171,60 @@ class ToolRegistry:
 
     def load_dynamic_tools(self):
         """Load AI-generated tools."""
-        self._load_from_directory(self.dynamic_path, "dynamic_tool_")
+        self._load_dynamic_from_directory(self.dynamic_path, "dynamic_tool_")
+
+    def _load_dynamic_from_directory(self, dir_path: Path, prefix: str):
+        """Scan for dynamic tools via their .json definition files to avoid memory leaks."""
+        if not dir_path.exists():
+            return
+            
+        print(f"Scanning dynamic tools in {dir_path} with prefix '{prefix}'...")
+        import json
+        from src.tools.dynamic import SubprocessDynamicTool
+        
+        loaded_count = 0
+        for schema_file in dir_path.rglob("*.json"):
+            if schema_file.name == "skills_index.json":
+                continue
+                
+            script_file = schema_file.with_suffix(".py")
+            if not script_file.exists():
+                print(f"Warning: Schema {schema_file.name} found but script {script_file.name} is missing.")
+                continue
+                
+            try:
+                with open(schema_file, 'r', encoding='utf-8') as f:
+                    schema_data = json.load(f)
+                    
+                tool_name = schema_data.get("name")
+                if not tool_name:
+                    continue
+                    
+                if tool_name in self.CORE_TOOL_NAMES:
+                    continue
+                    
+                tool_instance = SubprocessDynamicTool(
+                    name=tool_name,
+                    category=schema_data.get("category", "general"),
+                    description=schema_data.get("description", ""),
+                    parameters=schema_data.get("parameters", {"type": "object", "properties": {}}),
+                    script_path=script_file
+                )
+                
+                schema_error = self._validate_tool_schema(tool_instance)
+                if schema_error:
+                    print(f"⚠️ Schema validation failed from {schema_file.name}: {schema_error}")
+                    continue
+                    
+                self.register(tool_instance)
+                loaded_count += 1
+            except Exception as e:
+                import traceback
+                print(f"Failed to load dynamic tool from {schema_file}: {e}")
+                traceback.print_exc()
+                
+        if loaded_count > 0:
+            print(f"Loaded {loaded_count} dynamic tools from {dir_path}")
 
     async def refresh(self) -> dict:
         """Async refresh with lock protection. Also updates the skills index JSON."""

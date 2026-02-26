@@ -44,28 +44,42 @@ class CreateToolTool(BaseTool):
                     "type": "string",
                     "description": "技能分類 (e.g., 'finance', 'github', 'system')，預設為 'general'。"
                 },
+                "description": {
+                    "type": "string",
+                    "description": "技能的詳細描述。"
+                },
+                "tool_parameters": {
+                    "type": "object",
+                    "description": "技能的 JSON Schema 參數定義 (必須包含 type: object 及 properties)。"
+                },
                 "code_content": {
                     "type": "string",
                     "description": (
-                        "完整的 Python 程式碼 (必須繼承 BaseTool)。\n"
-                        "⚠️ [JSON Schema 規則]: 'array' 必須定義 'items', 'object' 必須定義 'properties'。\n"
+                        "完整的 Python CLI 腳本程式碼。\n"
+                        "⚠️ 必須實作為獨立執行的腳本，不需繼承 `BaseTool`。\n"
+                        "⚠️ 必須透過 `sys.stdin.read()` 接收 JSON 格式的參數。\n"
+                        "⚠️ 必須將執行結果以單一 JSON 格式透過 `print()` (stdout) 輸出。任何日誌或錯誤都必須輸出至 stderr (`sys.stderr.write`)。\n"
                         "💡 [程式碼骨架]:\n"
-                        "from src.tools.base import BaseTool\n"
-                        "class MyTool(BaseTool):\n"
-                        "    @property\n"
-                        "    def name(self): return 'my_tool'\n"
-                        "    @property\n"
-                        "    def parameters(self):\n"
-                        "        return {'type':'object', 'properties':{'arg':{'type':'array','items':{'type':'string'}}}, 'required':['arg']}\n"
-                        "    async def execute(self, **kwargs): return {'status':'success'}"
+                        "import sys, json\n"
+                        "def main():\n"
+                        "    try:\n"
+                        "        args = json.loads(sys.stdin.read() or '{}')\n"
+                        "        result = {'status': 'success', 'data': args}\n"
+                        "        print(json.dumps(result))\n"
+                        "    except Exception as e:\n"
+                        "        print(json.dumps({'status': 'error', 'message': str(e)}))\n"
+                        "if __name__ == '__main__':\n"
+                        "    main()"
                     )
                 }
             },
-            "required": ["tool_name", "code_content"]
+            "required": ["tool_name", "description", "tool_parameters", "code_content"]
         }
 
     async def execute(self, **kwargs) -> dict:
         tool_name = kwargs.get("tool_name")
+        description = kwargs.get("description", "A generated task tool")
+        tool_parameters = kwargs.get("tool_parameters", {"type": "object", "properties": {}})
         code_content = kwargs.get("code_content")
 
         if not tool_name or not code_content:
@@ -98,11 +112,22 @@ class CreateToolTool(BaseTool):
             
         file_path = base_dir / filename
         
+        import json
+        schema_path = file_path.with_suffix('.json')
+        schema_data = {
+            "name": safe_name.replace("dynamic_tool_", "") if safe_name.startswith("dynamic_tool_") else safe_name,
+            "category": safe_category,
+            "description": description,
+            "parameters": tool_parameters
+        }
+        
         async with self._lock:
             try:
                 base_dir.mkdir(exist_ok=True, parents=True)
                 with open(file_path, "w", encoding="utf-8") as f:
                     f.write(code_content)
+                with open(schema_path, "w", encoding="utf-8") as f:
+                    json.dump(schema_data, f, ensure_ascii=False, indent=2)
             except Exception as e:
                 return {"status": "error", "message": f"File write failed: {e}"}
 

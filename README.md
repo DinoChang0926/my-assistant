@@ -5,7 +5,7 @@
 ## 🌟 核心特性
 
 - **模組化單體架構**: 清楚的層級劃分：感知層、大腦層、記憶層、技能層 (Skills)。
-- **自我進化機制 (Agentic Self-Evolution)**: Agent 可於運行時偵測能力缺失，自動編寫、測試並部署新技能，無需重啟服務。
+- **自我進化機制 (Agentic Self-Evolution)**: Agent 可於運行時偵測能力缺失，自動編寫、測試並部署新技能，無需重啟服務。動態技能具備獨立的子進程沙盒 (Subprocess Sandbox) 隔離執行，防止記憶體洩漏與主階段阻塞。
 - **元技能系統 (Meta-Skills)**: 提供 `create_tool`、`inspect_tool`、`reload_tools` 等核心開發技能。
 - **本機記憶與事件追蹤 (Dual Memory Resilience)**:
   - **長期事實 (Facts)** → `storage/local_memory.json`：永久儲存使用者個人化資訊。
@@ -66,6 +66,7 @@ cp .env.example .env
 ```
 
 必填變數：
+
 - `COPILOT_GITHUB_TOKEN`: GitHub Token (需具備 `repo` 與 Copilot 相關權限)。
 - `GITHUB_REPO_NAME`: PR 目標儲存庫 (格式: `owner/repo`)。**選填** (GitOps PR 功能實作後才需要)。
 - `TELEGRAM_BOT_TOKEN`: 用於啟動 Telegram Bot (選填)。設定後自動啟動，並透過 Session Mapping 實現無縫的會話接續。
@@ -85,25 +86,29 @@ docker-compose up --build
 若要進行開發或除錯，建議使用虛擬環境：
 
 1. **建立並啟用虛擬環境**:
-   
+
    Windows:
+
    ```powershell
    python -m venv venv
    .\venv\Scripts\activate
    ```
 
    Linux/macOS:
+
    ```bash
    python -m venv venv
    source venv/bin/activate
    ```
 
 2. **安裝依賴**:
+
    ```bash
    pip install -r requirements.txt
    ```
 
 3. **啟動服務**:
+
    ```bash
    # 務必使用 module 方式啟動，否則會遇到 Import Error
    python -m src.main
@@ -130,6 +135,9 @@ docker-compose up --build
 - **Agent 無法讀取儲存好的憑證 (Secret Manager)**：
   - 若在 Windows/macOS **本機**執行，憑證將會存放在作業系統的 Credential Manager 內，請檢查 OS 層級管理員 (`keyring` 負責存取)。
   - 若在 **Docker** 環境執行，Secret Manager 會預設回退使用加密檔案 `.secrets.enc`。如果容器重啟後憑證遺失，請檢查是否有一併掛載 `./storage:/app/storage`，且您的 `.env` 內是否有正確的 `SECRET_MASTER_KEY` (初次啟動時自動生成)。
+- **動態技能執行失敗或超時 (Timeout)**：
+  - 自進化產生的動態技能 (`dynamic_tool_*.py`) 已改為獨立的子進程腳本執行。系統預設給定 15 秒的執行極限，超時將被強制中止 (`process.kill()`)。
+  - 若遇執行錯誤，您可以直接手動透過命令列測試：`echo '{"arg":"val"}' | python storage/dynamic_tools/general/dynamic_tool_xxx.py`，並觀測是否成功於單行輸出合法 JSON，任何除錯資訊皆應走 `stderr`。
 
 ## 🛠️ 自我進化工作流 (Evolution Flow)
 
@@ -186,7 +194,8 @@ graph TD
     J --> K[工作階段結束 / 等待下一次輸入]
 ```
 
-### 流程說明：
+### 流程說明
+
   1. **實質異步發包 (Non-Blocking Dispatch)**：
      Supervisor 認定需要開發新工具時，使用 `delegate_to_mechanic` 工具建立背景任務（利用 `asyncio.create_task` **並將任務紀錄寫入 class 屬性**，以徹底隔離主執行緒的 `Event Loop` 並避免其被 GC 回收或阻塞）。主對話框瞬間解鎖，並自動回覆「已發包」。
   2. **雙重極限護盾 (Dual-Timeout Safeguard)**：
@@ -234,6 +243,7 @@ graph TD
 | **長期** | `my-tools` MCP Server | MCP 協定，Copilot SDK 原生支援 |
 
 **Agent 維護方式**：
+
 - Evolution Mechanic 負責在 `my-tools` repo 中新增/修改工具
 - 工具寫入後呼叫 `reload_tools`，MCP Server 熱重載
 - 主流程 (`my-assistant`) 完全不需要變動

@@ -2,7 +2,7 @@ import ast
 
 # 定義允許的模組白名單 (標準庫 + requirements.txt)
 ALLOWED_MODULES = {
-    'src', 'src.tools.base', 'src.brain.prompts',
+    'src', 'src.tools.base', 'src.brain.prompts', 'sys',
     'asyncio', 'json', 'datetime', 'time', 're', 'math', 'random', 'pathlib',
     'pandas', 'yfinance', 'requests', 'beautifulsoup4', 'bs4', 'duckduckgo_search',
     'googleapiclient', 'google', 'ta', 'matplotlib', 'mplfinance', 'numpy', 'pydantic',
@@ -15,10 +15,8 @@ BANNED_FUNCTIONS = {'os.system', 'subprocess.run', 'subprocess.Popen', 'subproce
 def validate_tool_code(code: str) -> tuple[bool, list[str]]:
     """
     驗證 Python 代碼是否符合 Tool 規範：
-    1. 必須包含 Class 定義
-    2. Class 必須繼承 BaseTool
-    3. 嚴格檢查 Import 白名單
-    4. 禁止危險操作 (os.system, subprocess, eval 等)
+    1. 嚴格檢查 Import 白名單
+    2. 禁止危險操作 (os.system, subprocess, eval 等)
     """
     try:
         tree = ast.parse(code)
@@ -26,18 +24,8 @@ def validate_tool_code(code: str) -> tuple[bool, list[str]]:
         return False, [f"Syntax Error: {e}"]
 
     errors = []
-    has_class = False
-    inherits_base_tool = False
     
     for node in ast.walk(tree):
-        # 1. 檢查 Class 定義
-        if isinstance(node, ast.ClassDef):
-            has_class = True
-            for base in node.bases:
-                if isinstance(base, ast.Name) and base.id == 'BaseTool':
-                    inherits_base_tool = True
-                elif isinstance(base, ast.Attribute) and base.attr == 'BaseTool':
-                    inherits_base_tool = True
 
         # 2. 檢查 Import 白名單
         if isinstance(node, (ast.Import, ast.ImportFrom)):
@@ -64,10 +52,5 @@ def validate_tool_code(code: str) -> tuple[bool, list[str]]:
                 
             if func_name in BANNED_FUNCTIONS:
                 errors.append(f"Security Error: Call to banned function '{func_name}' is forbidden.")
-
-    if not has_class:
-        errors.append("Code must define a Python Class.")
-    if not inherits_base_tool:
-        errors.append("The Class must inherit from 'BaseTool' (or 'src.tools.base.BaseTool').")
 
     return len(errors) == 0, errors
