@@ -1,27 +1,41 @@
-fastapi
-uvicorn[standard]
-python-dotenv
-python-telegram-bot
-pydantic
-pydantic-settings
-github-copilot-sdk
-PyGithub
+# =============================================================================
+# requirements.txt
+# 套件定義 source of truth 為 pyproject.toml
+# 要建立完全鎖定的 lock file，請執行：
+#   pip install pip-tools
+#   pip-compile pyproject.toml -o requirements.txt
+# =============================================================================
+
+# --- 核心框架 ---
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+pydantic>=2.0
+pydantic-settings>=2.0
+python-dotenv>=1.0.0
+
+# --- AI / 平台 SDK ---
+github-copilot-sdk>=0.1.13
+PyGithub>=2.0
+python-telegram-bot>=21.0
+
 # --- 網路與搜尋 ---
-requests
-beautifulsoup4
-duckduckgo-search
+requests>=2.31.0
+beautifulsoup4>=4.0
+duckduckgo-search>=6.0
+
 # --- Google 服務 ---
-google-api-python-client
-google-auth-httplib2
-google-auth-oauthlib
+google-api-python-client>=2.0
+google-auth-httplib2>=0.1.0
+google-auth-oauthlib>=1.0.0
+
 # --- 金融分析 ---
-yfinance
-pandas
-numpy
-ta
-matplotlib
-mplfinance
+yfinance>=0.2.0
+pandas>=2.0.0
+numpy>=1.26.0
+ta>=0.10.2
+matplotlib>=3.8.0
+mplfinance>=0.12.10
 
 # --- 密碼管理 ---
-keyring
-cryptography
+keyring>=25.0.0
+cryptography>=43.0.0

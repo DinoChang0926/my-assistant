@@ -16,6 +16,7 @@ class ToolRegistry:
     def __init__(self):
         self._tools: Dict[str, BaseTool] = {}
         self._lock = asyncio.Lock()  # 🛡️ Prevent race conditions during refresh
+        self._broken_modules: set = set()  # 本次啟動期間已知無法載入的模組，下次 refresh 跳過
         self._base_dir = Path(__file__).parent
         self.static_path = self._base_dir / "static"
         
@@ -98,6 +99,11 @@ class ToolRegistry:
             if f.name.startswith("__"):
                 continue
             
+            # 🚫 跳過本次啟動已知無法載入的模組
+            if str(f) in self._broken_modules:
+                logger.warning(f"Skipping known-broken module: {f.name}")
+                continue
+            
             # Namespace isolation: dynamic_tool_xxx
             # 如果檔案已經以 prefix 開頭了，就不要再疊加
             if f.stem.startswith(prefix):
@@ -154,15 +160,10 @@ class ToolRegistry:
                         
             except Exception as e:
                 import traceback
-                # 🛡️ Failure Rollback: Rename broken files
-                print(f"Failed to load module {module_name} from {f}: {e}")
+                # � 記録到記憑體黑名單，避免下次 refresh 重試。不再自動 rename 檔案，避免誤傷原始碼。
+                logger.error(f"Failed to load module {module_name} from {f}: {e}")
+                self._broken_modules.add(str(f))
                 traceback.print_exc()
-                try:
-                    broken_path = f.with_suffix(".py.broken")
-                    f.rename(broken_path)
-                    print(f"Renamed broken file to: {broken_path.name}")
-                except Exception as rename_error:
-                    print(f"CRITICAL: Failed to rename broken file {f.name}: {rename_error}")
 
     def load_static_tools(self):
         """Load built-in tools."""

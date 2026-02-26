@@ -104,8 +104,8 @@ class SessionManager:
                     config=resume_config
                 )
                 print(f"Successfully synced/resumed session UUID: {sdk_session_id}")
-                wrapper = SessionWrapper(session_id, sdk_session)
-                self._sessions[session_id] = wrapper
+                wrapper = SessionWrapper(namespaced_session_id, sdk_session)
+                self._sessions[namespaced_session_id] = wrapper
                 return wrapper
             except Exception as e:
                 err_msg = str(e)

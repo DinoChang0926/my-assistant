@@ -1,13 +1,17 @@
 import asyncio
 import re
 import copy
+import json
+import os
 import logging
+from datetime import datetime
 from typing import Any, List, Callable, Awaitable, Optional
 from src.core.events import AgentEvent, AgentResponse
 from src.core.interfaces import RouteConfig
 from src.memory.manager import SessionManager
 from src.tools.registry import ToolRegistry
 from src.brain.prompts import SKILL_ACQUISITION_PROMPT
+from src.config import settings
 from copilot import MessageOptions
 
 logger = logging.getLogger("orchestrator")
@@ -94,34 +98,34 @@ class TaskOrchestrator:
         route_config.system_prompt = original_system_prompt + self._build_tool_catalog(sdk_tools)
 
         # 2. Read local memory and append to system_prompt BEFORE session creation.
-        import json
-        import os
-        from src.config import settings
         storage_path = settings.SESSION_STORAGE_PATH
         memory_parts = []
+
+        def _read_json_file(path: str):
+            """Synchronous JSON reader, intended for asyncio.to_thread calls."""
+            with open(path, 'r', encoding='utf-8') as f:
+                return json.load(f)
 
         facts_file = os.path.join(storage_path, "local_memory.json")
         if os.path.exists(facts_file):
             try:
-                with open(facts_file, 'r', encoding='utf-8') as f:
-                    facts_data = json.load(f)
-                    if facts_data:
-                        for k, v in list(facts_data.items())[:10]:
-                            if "session_summary" not in k and "latest_mechanic" not in k:
-                                memory_parts.append(f"{k}={str(v)[:60]}")
+                facts_data = await asyncio.to_thread(_read_json_file, facts_file)
+                if facts_data:
+                    for k, v in list(facts_data.items())[:10]:
+                        if "session_summary" not in k and "latest_mechanic" not in k:
+                            memory_parts.append(f"{k}={str(v)[:60]}")
             except Exception as e:
                 logger.info(f"[Orchestrator] Error reading facts: {e}")
 
         events_file = os.path.join(storage_path, "event_log.json")
         if os.path.exists(events_file):
             try:
-                with open(events_file, 'r', encoding='utf-8') as f:
-                    events_data = json.load(f)
-                    if events_data and isinstance(events_data, list):
-                        for entry in events_data[-2:]:
-                            ts = entry.get("timestamp", "")[:10]
-                            val = str(entry.get('value', ''))[:80]
-                            memory_parts.append(f"[{ts}]{entry.get('key')}:{val}")
+                events_data = await asyncio.to_thread(_read_json_file, events_file)
+                if events_data and isinstance(events_data, list):
+                    for entry in events_data[-2:]:
+                        ts = entry.get("timestamp", "")[:10]
+                        val = str(entry.get('value', ''))[:80]
+                        memory_parts.append(f"[{ts}]{entry.get('key')}:{val}")
             except Exception as e:
                 logger.info(f"[Orchestrator] Error reading events: {e}")
 
@@ -144,8 +148,6 @@ class TaskOrchestrator:
         done_event = asyncio.Event()
 
         def handle_event(event_obj: Any):
-            import logging
-            logger = logging.getLogger("orchestrator")
             e_type = event_obj.type.value if hasattr(event_obj.type, 'value') else str(event_obj.type)
             logger.info(f"[SDK Event Debug] type={e_type}, data={getattr(event_obj, 'data', None)}")
             
@@ -167,12 +169,11 @@ class TaskOrchestrator:
                 
                 if "upgrade_signal" in res_val:
                     try:
-                        import ast
-                        result_dict = ast.literal_eval(res_val) if res_val.startswith('{') else {}
+                        result_dict = json.loads(res_val) if res_val.startswith('{') else {}
                         if result_dict.get("status") == "upgrade_signal":
                             cats = result_dict.get("requested_categories", [])
                             turn_data["upgrade_requested"] = cats
-                    except Exception:
+                    except (json.JSONDecodeError, Exception):
                         pass
             elif e_type == "session.error":
                 turn_data["error"] = event_obj.data.message
@@ -217,7 +218,6 @@ class TaskOrchestrator:
         wrapper.turn_count += 1
         
         # 6. Post-process
-        from datetime import datetime
         final_content = turn_data["assistant_message"]
         if "<think>" in final_content:
             final_content = re.sub(r'<think>.*?</think>', '', final_content, flags=re.DOTALL).strip()

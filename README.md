@@ -14,7 +14,7 @@
 - **安全代碼驗證**: 整合 AST 靜態分析，白名單限制 import 模組，禁止危險函數 (`subprocess`, `eval` 等)。
 - **自動故障修復 (Auto-Recovery)**: 偵測到 SDK 管道中斷或 400 Overflow 時，會自動支援重置 Session。且針對 400 Reset 加入了 120 秒超時保護與監聽器重綁機制。
 - **異步主動回饋機制 (True Async Feedback)**: 背景委派任務完工後，會透過系統事件主動注入主助理工作階段，由主助理以自然語言推播通知，完全不需使用者輪詢。
-- **依賴鎖定 (Dependency Lockdown)**: 以 `requirements.txt` 鎖定所有套件，防止 Agent 動態安裝未知依賴。
+- **依賴管理**：以 `pyproject.toml` 為唯一套件定義來源，`requirements.txt` 同步維護最低版本限制。防止 Agent 動態安裝未知依賴。（建議使用 `pip-compile` 生成完全鎖定的 lock file）
 - **GitOps PR 工作流 🚧 (規劃中)**: 自動建立 GitHub Branch 並發起 PR，實現人類在環 (Human-in-the-loop) 的代碼審核。
 
 ## 📁 目錄結構
@@ -79,6 +79,13 @@ cp .env.example .env
 
 ```bash
 docker-compose up --build
+```
+
+啟動後服務監聽於器內的 **port 8000**，是否 `docker-compose.yml` 將其映射到外部可自行調整（預設映射為 `8081:8000`）：
+
+```bash
+# REST API 存取地址
+curl http://localhost:8081/health
 ```
 
 #### 方法 B：本機開發 (Local Development)
@@ -190,8 +197,8 @@ graph TD
         H -->|Assistant Message| K[串流回傳使用者]
     end
     
-    I -->|5. Auto-Persist| J[更新事件紀錄 event_log.json]
-    J --> K[工作階段結束 / 等待下一次輸入]
+    I -->|5. Auto-Persist| J2[更新事件紀錄 event_log.json]
+    J2 --> K2[工作階段結束 / 等待下一次輸入]
 ```
 
 ### 流程說明

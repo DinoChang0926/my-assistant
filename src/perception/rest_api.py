@@ -10,9 +10,8 @@ app = FastAPI(title="AI Agent API")
 import logging
 logger = logging.getLogger(__name__)
 
-# Dependency Placeholder (will be injected in main.py)
-gateway: UnifiedGateway = None
-tool_registry: Any = None  # Injected
+# 依賴透過 app.state 注入，避免模組級全域變數
+# 請在 main.py lifespan 中呼叫 rest_api.set_gateway() / rest_api.set_tool_registry()
 
 class ChatRequest(BaseModel):
     content: str
@@ -24,7 +23,7 @@ async def health_check():
 
 @app.post("/chat", response_model=AgentResponse)
 async def chat(request: ChatRequest):
-    if gateway is None:
+    if not hasattr(app.state, "gateway") or app.state.gateway is None:
         raise HTTPException(status_code=503, detail="Gateway not initialized")
     
     event = AgentEvent(
@@ -34,28 +33,28 @@ async def chat(request: ChatRequest):
         content=request.content
     )
     
-    response = await gateway.process(event)
+    response = await app.state.gateway.process(event)
     return response
 
 # Skills (Tools) Management Endpoints
 @app.get("/skills")
 async def list_skills():
     """List all available tools/skills with metadata."""
-    if tool_registry is None:
+    if not hasattr(app.state, "tool_registry") or app.state.tool_registry is None:
         raise HTTPException(status_code=503, detail="ToolRegistry not initialized")
     
     # Return full schema for each tool to provide "how to use" info
     return {
-        "total": len(tool_registry._tools),
-        "skills": tool_registry.get_all_schemas()
+        "total": len(app.state.tool_registry._tools),
+        "skills": app.state.tool_registry.get_all_schemas()
     }
 
 @app.post("/skills/reload")
 async def reload_skills():
     """Trigger a hot-reload of all static and dynamic tools."""
-    if tool_registry is None:
+    if not hasattr(app.state, "tool_registry") or app.state.tool_registry is None:
         raise HTTPException(status_code=503, detail="ToolRegistry not initialized")
-    result = await tool_registry.refresh()
+    result = await app.state.tool_registry.refresh()
     return {
         "status": "success",
         "message": "Skills reloaded successfully",
@@ -65,9 +64,9 @@ async def reload_skills():
 @app.get("/skills/{name}")
 async def get_skill_details(name: str):
     """Get detailed schema for a specific skill."""
-    if tool_registry is None:
+    if not hasattr(app.state, "tool_registry") or app.state.tool_registry is None:
         raise HTTPException(status_code=503, detail="ToolRegistry not initialized")
-    tool = tool_registry.get_tool(name)
+    tool = app.state.tool_registry.get_tool(name)
     if not tool:
         raise HTTPException(status_code=404, detail=f"Skill '{name}' not found")
     return tool.to_schema()
@@ -78,9 +77,7 @@ async def refresh_tools():
     return await reload_skills()
 
 def set_gateway(g: UnifiedGateway):
-    global gateway
-    gateway = g
+    app.state.gateway = g
 
 def set_tool_registry(r: Any):
-    global tool_registry
-    tool_registry = r
+    app.state.tool_registry = r
