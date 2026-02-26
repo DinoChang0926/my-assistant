@@ -37,20 +37,29 @@ class InspectToolTool(BaseTool):
             return {"status": "error", "message": "Missing tool_name."}
 
         base_dir = Path(__file__).parent.parent
+        project_root = base_dir.parent.parent
         static_path = base_dir / "static"
-        dynamic_path = base_dir.parent.parent / "storage" / "dynamic_tools"
+        atomic_path = project_root / "my-tools" / "atomic"
+        dynamic_path = project_root / "storage" / "dynamic_tools"
 
         found_path = None
         
-        # 1. 搜尋 static 技能 (沒有分類子目錄)
+        # 1. 搜尋 meta-skills (src/tools/static/)
         p1 = static_path / f"{tool_name}.py"
         p2 = static_path / f"static_tool_{tool_name}.py"
         if p1.exists():
             found_path = p1
         elif p2.exists():
             found_path = p2
+
+        # 2. 搜尋 atomic tools (my-tools/atomic/)
+        if not found_path and atomic_path.exists():
+            for p in atomic_path.rglob("*.py"):
+                if p.name == f"{tool_name}.py" or p.name == f"static_tool_{tool_name}.py":
+                    found_path = p
+                    break
             
-        # 2. 如果 static 找不到，則搜尋 dynamic 技能 (因為可能有分類資料夾，所以用 rglob)
+        # 3. 搜尋 dynamic 技能 (因為可能有分類資料夾，所以用 rglob)
         if not found_path and dynamic_path.exists():
             for p in dynamic_path.rglob("*.py"):
                 if p.name == f"{tool_name}.py" or p.name == f"dynamic_tool_{tool_name}.py":

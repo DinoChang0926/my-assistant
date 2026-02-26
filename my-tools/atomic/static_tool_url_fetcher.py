@@ -1,7 +1,6 @@
 from src.tools.base import BaseTool
 import requests
 from bs4 import BeautifulSoup
-import json
 
 class URLFetcherTool(BaseTool):
     """

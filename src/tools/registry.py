@@ -18,10 +18,14 @@ class ToolRegistry:
         self._lock = asyncio.Lock()  # 🛡️ Prevent race conditions during refresh
         self._broken_modules: set = set()  # 本次啟動期間已知無法載入的模組，下次 refresh 跳過
         self._base_dir = Path(__file__).parent
+        self._project_root = self._base_dir.parent.parent
         self.static_path = self._base_dir / "static"
         
+        # Phase 1: 原子工具已搬遷至 my-tools/atomic/
+        self.atomic_path = self._project_root / "my-tools" / "atomic"
+        
         # 移至 storage/dynamic_tools 確保 Docker 容器重啟也能持久化
-        self.dynamic_path = self._base_dir.parent.parent / "storage" / "dynamic_tools"
+        self.dynamic_path = self._project_root / "storage" / "dynamic_tools"
         self.dynamic_path.mkdir(parents=True, exist_ok=True)
 
     def register(self, tool: BaseTool):
@@ -166,9 +170,11 @@ class ToolRegistry:
                 traceback.print_exc()
 
     def load_static_tools(self):
-        """Load built-in tools."""
-        # Using rglob in _load_from_directory already scans subdirectories (like atomic)
+        """Load built-in tools (meta-skills + atomic tools from my-tools/)."""
+        # 1. 載入 meta-skills (create_tool, reload_tools, task_control, delegate_mechanic...)
         self._load_from_directory(self.static_path, "static_tool_")
+        # 2. Phase 1: 載入原子工具 (已搬遷至 my-tools/atomic/)
+        self._load_from_directory(self.atomic_path, "static_tool_")
 
     def load_dynamic_tools(self):
         """Load AI-generated tools."""

@@ -56,6 +56,12 @@ python -m src.main
 - **驗證**：觀察啟動 log 確認所有工具正常載入，透過 Telegram 或 REST API 驗證功能。
 
 ### 4. Docker 環境驗證 (Container Validation)
+- **架構異動檢查**：若本次變更涉及以下類型的架構調整，**必須同步檢查並更新 Docker 相關配置**：
+  - **新增目錄或 package** → 確認 `Dockerfile` 的 `COPY` 指令是否需要新增對應路徑
+  - **新增依賴** → 確認 `Dockerfile` 的 `pip install` 是否需要安裝新 package（例如 `pip install ./my-tools`）
+  - **新增需持久化的資料目錄** → 確認 `docker-compose.yml` 的 `volumes` 是否需要新增掛載
+  - **新增服務或進程** → 確認是否需要調整 `CMD`、新增 `EXPOSE` port 或修改 `docker-compose.yml` 的 `services`
+  - **搬遷模組路徑** → 確認容器內的 `PYTHONPATH` 和 `WORKDIR` 是否仍然正確
 - **建置**：本機測試成功後，執行 `wsl docker compose build`。
 - **啟動**：執行 `wsl docker compose up -d`。
 - **驗證**：確保 Dockerfile 的權限設定、相依套件與 Volume 掛載在容器內運作正常。

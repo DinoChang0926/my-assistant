@@ -27,7 +27,7 @@ class SecretManagerStoreTool(BaseTool):
         "required": ["service", "username", "password"]
     }
 
-    async def execute(self, kwargs: Dict[str, Any], context: Any = None) -> str:
+    async def execute(self, **kwargs) -> str:
         service = kwargs.get("service")
         username = kwargs.get("username")
         password = kwargs.get("password")
@@ -58,7 +58,7 @@ class SecretManagerReadTool(BaseTool):
         "required": ["service", "username"]
     }
 
-    async def execute(self, kwargs: Dict[str, Any], context: Any = None) -> str:
+    async def execute(self, **kwargs) -> str:
         service = kwargs.get("service")
         username = kwargs.get("username")
         
@@ -87,7 +87,7 @@ class SecretManagerDeleteTool(BaseTool):
         "required": ["service", "username"]
     }
 
-    async def execute(self, kwargs: Dict[str, Any], context: Any = None) -> str:
+    async def execute(self, **kwargs) -> str:
         service = kwargs.get("service")
         username = kwargs.get("username")
         

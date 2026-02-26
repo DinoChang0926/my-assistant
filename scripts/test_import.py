@@ -1,5 +1,5 @@
 import sys; import traceback; import importlib.util
-f='src/tools/static/atomic/static_tool_web_search.py'
+f='my-tools/atomic/static_tool_web_search.py'
 spec=importlib.util.spec_from_file_location('test', f)
 m=importlib.util.module_from_spec(spec)
 try:

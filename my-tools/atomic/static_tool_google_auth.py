@@ -1,11 +1,9 @@
 from src.tools.base import BaseTool
 from googleapiclient.discovery import build
-from google.oauth2 import service_account
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 import os.path
 import pickle
-import json
 
 class GoogleAuthTool(BaseTool):
     """

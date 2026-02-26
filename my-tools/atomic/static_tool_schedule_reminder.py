@@ -2,7 +2,7 @@ import json
 import os
 from typing import Any, Dict, List, Optional
 from src.tools.base import BaseTool
-from src.config import settings
+from src.config import settings  # TODO: Phase 2 — 移除對 src.config 的直接依賴，改為參數注入或環境變數
 
 class ScheduleReminderTool(BaseTool):
     """

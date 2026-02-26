@@ -26,9 +26,12 @@ my-assistant/
 │   ├── perception/    # 感知層 (FastAPI, Gateway, Telegram)
 │   ├── brain/         # 大腦層 (Router, Orchestrator, Prompts)
 │   ├── memory/        # 記憶層 (Session Manager, Session Mapping)
-│   └── tools/         # 技能層
-│       └── static/    # 靜態/元技能 (create, inspect, reload, task_control...)
-│           └── atomic/ # 預建原子工具 (web_search, url_fetcher, stock_loader, local_memory, google_auth...)
+│   └── tools/         # 技能層骨架 (Registry, BaseTool, Meta-Skills)
+│       └── static/    # 元技能 (create, inspect, reload, task_control, delegate_mechanic)
+├── my-tools/          # 獨立工具層 (Phase 1 分離)
+│   ├── atomic/        # 預建原子工具 (web_search, url_fetcher, google_auth, local_memory...)
+│   ├── server.py      # Phase 2 MCP Server 入口 (預留)
+│   └── pyproject.toml # 工具專屬依賴宣告
 ├── requirements.txt   # 鎖定版依賴清單 (pip install -r requirements.txt)
 └── storage/           # 持久化儲存區
     ├── local_memory.json     # 長期記憶 (使用者事實、偏好)
@@ -223,37 +226,158 @@ graph TD
 
 ## 🗺️ 後續計畫 (Roadmap)
 
-### 工具伺服器分離（MCP Architecture）
+### 工具伺服器模組化（Single-Container MCP Architecture）
 
-> **背景**：隨著動態工具數量增長（50+），將工具 Schema 全部注入 Session 會造成 Token 壓力。計畫將工具層獨立為 [MCP（Model Context Protocol）](https://modelcontextprotocol.io/) 相容的獨立服務。
+> **背景**：隨著動態工具數量增長（50+），將工具 Schema 全部注入 Session 會造成 Token 壓力。計畫將工具層重構為 [MCP（Model Context Protocol）](https://modelcontextprotocol.io/) 相容的獨立模組，但**維持單一 Docker 容器部署**，避免跨容器網路的額外複雜度。
 
-**目標架構（雙容器 Docker Compose）**：
+**目標架構（單容器 · 雙進程）**：
 
 ```
-                    Docker Network
-┌─────────────────────────┐   ┌──────────────────────────┐
-│  assistant-brain        │   │  my-tools (MCP Server)   │
-│  (本 repo)              │──▶│  (獨立 repo)             │
-│  ├─ Orchestrator        │   │  ├─ BaseTool 基類         │
-│  ├─ SessionManager      │   │  ├─ 所有具體工具實作       │
-│  ├─ Telegram Bot        │   │  ├─ 熱重載 /reload        │
-│  └─ Router              │   │  └─ MCP HTTP Endpoint    │
-└─────────────────────────┘   └──────────────────────────┘
+┌─────────────────── Docker Container ───────────────────┐
+│                                                        │
+│  ┌──────────────────────┐   stdio / UDS                │
+│  │  assistant-brain     │◄══════════════►┐             │
+│  │  (主進程)            │                │             │
+│  │  ├─ FastAPI Server   │   ┌────────────┴───────────┐ │
+│  │  ├─ Orchestrator     │   │  my-tools (子進程)     │ │
+│  │  ├─ SessionManager   │   │  MCP Server (stdio)    │ │
+│  │  ├─ Telegram Bot     │   │  ├─ Static Tools       │ │
+│  │  └─ Router           │   │  ├─ Dynamic Tools      │ │
+│  └──────────────────────┘   │  ├─ Hot Reload         │ │
+│                              │  └─ BaseTool 基類      │ │
+│  Shared Volume:              └────────────────────────┘ │
+│  /app/storage/dynamic_tools/                            │
+│  /app/my-tools/                                         │
+└─────────────────────────────────────────────────────────┘
 ```
+
+**核心設計決策**：
+
+| 決策 | 選項 | 理由 |
+|---|---|---|
+| **容器數量** | 單容器 | 省去 Docker Network、服務發現、健康檢查等額外複雜度 |
+| **IPC 通道** | MCP stdio transport | MCP 原生支援 stdio，主進程 spawn 子進程即可通訊，零網路管理 |
+| **工具隔離** | 獨立子進程 | 與現有 `SubprocessDynamicTool` 設計一脈相承，天然防止記憶體洩漏 |
+| **程式碼分離** | Monorepo 子目錄 `my-tools/` | 邏輯獨立但共享建置上下文，Dockerfile 一次打包 |
 
 **演化路徑**：
 
-| 階段 | 動態工具位置 | 載入方式 |
+| 階段 | 里程碑 | 工具位置 | 載入方式 | 改動範圍 |
+|---|---|---|---|---|
+| **Phase 0** | ✅ 已完成 | `src/tools/static/` + `storage/dynamic_tools/` | Python import + Subprocess | — |
+| **Phase 1<br>程式碼分離** | ✅ 已完成 | `my-tools/atomic/` + `src/tools/static/` (元技能) | Python import（同容器內路徑引用） | `ToolRegistry` 路徑調整，`Dockerfile COPY` 新增 `my-tools/` |
+| **Phase 2<br>MCP stdio** | 🔜 暫緩 (等 SDK) | `my-tools/` 暴露 MCP stdio Server | 主進程透過 `stdio` spawn MCP Server 子進程 | 新增 `McpToolBridge`，取代 Registry 直接呼叫 |
+| **Phase 3<br>SDK 原生** | 🔜 待 SDK 發布 | 同上 | Copilot SDK 原生 MCP Client | 移除自建 Bridge，改用 SDK 內建 MCP 整合 |
+
+### Phase 1 — 程式碼分離（Monorepo 子目錄）
+
+將工具實作從 `src/tools/` 搬遷至頂層 `my-tools/` 目錄，建立獨立 package：
+
+```
+my-assistant/            ← 本 repo (Monorepo)
+├── src/                 ← 大腦層、感知層、記憶層
+│   └── tools/
+│       ├── registry.py  ← 只保留 Registry 骨架 + import bridge
+│       └── base.py      ← 維持 BaseTool ABC (共用契約)
+├── my-tools/            ← 工具層（獨立 package）
+│   ├── pyproject.toml   ← 工具專屬依賴宣告
+│   ├── static/          ← 原 src/tools/static/ 搬入
+│   ├── dynamic/         ← 原 storage/dynamic_tools/ 運行時寫入
+│   └── server.py        ← Phase 2 的 MCP Server 入口（預留）
+├── storage/             ← 持久化（volume mount）
+└── Dockerfile           ← COPY my-tools/ /app/my-tools/
+```
+
+**Dockerfile 異動** (預覽)：
+
+```dockerfile
+COPY pyproject.toml .
+COPY requirements.txt .
+COPY src/ ./src/
+COPY my-tools/ ./my-tools/          # ← 新增
+RUN pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir ./my-tools \   # ← 安裝工具 package
+    && pip install --no-cache-dir .
+```
+
+### Phase 2 — MCP stdio 整合
+
+在 `my-tools/server.py` 實作一個輕量 MCP Server，主進程透過 stdio 通道與其溝通：
+
+```python
+# my-tools/server.py（MCP Server 入口）
+from mcp.server.stdio import stdio_server
+from mcp.server import Server
+
+app = Server("my-tools")
+
+@app.list_tools()
+async def list_tools():
+    # 掃描 static/ + dynamic/ 回傳 Tool Schema
+    ...
+
+@app.call_tool()
+async def call_tool(name: str, arguments: dict):
+    # 查找並執行對應工具
+    ...
+
+async def main():
+    async with stdio_server() as (read, write):
+        await app.run(read, write, app.create_initialization_options())
+```
+
+```python
+# src/tools/mcp_bridge.py（主進程端 — MCP Client）
+import asyncio
+from mcp.client.stdio import stdio_client, StdioServerParameters
+
+class McpToolBridge:
+    """取代 ToolRegistry 的直接 import，改為透過 MCP 協定呼叫工具子進程。"""
+
+    async def connect(self):
+        server_params = StdioServerParameters(
+            command="python", args=["-m", "my_tools.server"]
+        )
+        self._transport = await stdio_client(server_params)
+        self._session = ...  # MCP ClientSession
+
+    async def list_tools(self) -> list[dict]:
+        result = await self._session.list_tools()
+        return [tool.to_dict() for tool in result.tools]
+
+    async def call_tool(self, name: str, arguments: dict) -> dict:
+        result = await self._session.call_tool(name, arguments)
+        return result
+```
+
+**優勢**：
+- **零網路**：stdio 通道走 OS pipe，延遲 < 1ms，無需開設 port 或管理 TCP。
+- **平滑降級**：MCP Server 子進程崩潰時，主進程可自動 respawn，不影響 FastAPI 健康檢查。
+- **向前相容**：日後若需拆分為獨立容器，只需將 `stdio_client` 替換為 `sse_client` 或 `streamable_http_client`，協定層完全不變。
+
+### Phase 3 — Copilot SDK 原生 MCP 支援
+
+當 GitHub Copilot SDK 正式支援 MCP Tool Provider 時：
+
+- 移除自建的 `McpToolBridge`
+- 在 SDK Session 建立時直接注冊 MCP Server endpoint
+- SDK 自行管理工具列舉、Schema 注入與呼叫轉發
+- `my-tools/server.py` 無需任何修改
+
+### Agent 自我進化適配
+
+| 行為 | Phase 0 (現狀) | Phase 1+ |
 |---|---|---|
-| **現在** | `storage/dynamic_tools/` (本 repo) | Python 直接 import |
-| **中期** | `my-tools` repo（獨立部署）| Python import，分離 repo |
-| **長期** | `my-tools` MCP Server | MCP 協定，Copilot SDK 原生支援 |
+| Mechanic 寫入新工具 | 寫入 `storage/dynamic_tools/` | 寫入 `my-tools/dynamic/` |
+| 工具生效方式 | `reload_tools` → Registry 重掃 | `reload_tools` → 通知 MCP Server 重掃 |
+| 工具執行隔離 | `SubprocessDynamicTool` (15s timeout) | MCP Server 子進程內執行（同等隔離） |
+| 主流程改動 | — | 僅 `reload_tools` 改為發送 MCP reload signal |
 
-**Agent 維護方式**：
+### GitOps PR 工作流 🚧 (規劃中)
 
-- Evolution Mechanic 負責在 `my-tools` repo 中新增/修改工具
-- 工具寫入後呼叫 `reload_tools`，MCP Server 熱重載
-- 主流程 (`my-assistant`) 完全不需要變動
+- Evolution Mechanic 開發完工具後，自動建立 GitHub Branch 並發起 PR
+- 實現 **Human-in-the-loop** 的代碼審核，正式合併後才部署至生產環境
+- 搭配 Phase 1 的 Monorepo 結構，PR 範圍可精確限定於 `my-tools/` 子目錄
 
 ---
 Developed with ❤️ for AI Agent research.

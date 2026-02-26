@@ -24,9 +24,12 @@ WORKDIR /app
 COPY pyproject.toml .
 COPY requirements.txt .
 COPY src/ ./src/
+COPY my-tools/ ./my-tools/
 
 # Install any needed packages specified in requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt && pip install --no-cache-dir . \
+RUN pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir ./my-tools \
+    && pip install --no-cache-dir . \
     && chmod +x /usr/local/lib/python3.11/site-packages/copilot/bin/copilot || true
 
 # Make port 8000 available to the world outside this container
