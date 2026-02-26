@@ -39,6 +39,26 @@ SKILL_ACQUISITION_PROMPT = """
 2. **制定方案**：
    - 若缺少工具 -> 立即呼叫 `create_tool` 創建它。
    - 若工具存在但邏輯錯誤 -> 立即呼叫 `create_tool` (Overwrite) 修復它。
-   - [安全警告] 工具的 `execute` 方法必須定義為 `async def execute` 否則會癱瘓整個系統。如果 `parameters` 使用了 `object`，就算沒有屬性也一定要寫 `properties: {}`。
-3. **執行**：不要詢問使用者「是否要我...」，直接執行修復動作。
+   - [安全警告] 工具的 `execute` 方法必須定義為 `async def execute` 否則會癱瘓整個系統。如果 `parameters` 使用了 `object`，就算沒有屬性也一定要寫 `properties: {{}}`。
+3. **單元測試 (必要)**：呼叫 `create_tool` 時，`test_code` 為必填參數。
+   - 測試必須透過 subprocess 呼叫工具腳本，驗證 stdin→stdout 的 JSON 契約。
+   - 至少包含：正常輸入的成功案例 + 邊界/錯誤輸入的案例。
+   - 測試未通過時系統會自動回滾，請根據回傳的 `test_output` 修正後重試。
+   - [測試骨架]:
+     ```
+     import subprocess, sys, json, pytest
+     SCRIPT = __file__.replace('test_dynamic_tool_', 'dynamic_tool_')
+     def run_tool(input_data: dict) -> dict:
+         proc = subprocess.run([sys.executable, SCRIPT],
+             input=json.dumps(input_data), capture_output=True, text=True, timeout=10)
+         assert proc.returncode == 0, f'Script failed: {{proc.stderr}}'
+         return json.loads(proc.stdout.strip().split(chr(10))[-1])
+     def test_success_case():
+         result = run_tool({{'param': 'value'}})
+         assert result['status'] == 'success'
+     def test_error_case():
+         result = run_tool({{}})
+         assert 'status' in result
+     ```
+4. **執行**：不要詢問使用者「是否要我...」，直接執行修復動作。
 """
