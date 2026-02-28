@@ -14,10 +14,21 @@ from src.tools.base import BaseTool
 logger = logging.getLogger(__name__)
 
 class ToolRegistry:
-    """Registry to manage and retrieve tools with dynamic loading capabilities."""
+    """Registry to manage and retrieve tools with dynamic loading capabilities.
+
+    Supports two tool formats:
+    - Legacy ``BaseTool`` subclasses (core/meta tools, dynamic tools, send_telegram_buttons)
+    - Native SDK ``Tool`` objects created via ``@define_tool`` (Phase 3a atomic tools)
+
+    Modules using ``@define_tool`` should export:
+        EXPORTED_TOOLS: list[Tool]   – list of @define_tool decorated functions
+        TOOL_CATEGORY: str           – category name applied to all tools in the module
+    """
     
     def __init__(self):
-        self._tools: Dict[str, BaseTool] = {}
+        self._tools: Dict[str, BaseTool] = {}              # Legacy BaseTool instances
+        self._native_tools: Dict[str, Tool] = {}           # SDK Tool objects from @define_tool
+        self._tool_categories: Dict[str, str] = {}         # tool_name -> category for native tools
         self._lock = asyncio.Lock()  # 🛡️ Prevent race conditions during refresh
         self._broken_modules: set = set()  # 本次啟動期間已知無法載入的模組，下次 refresh 跳過
         self._base_dir = Path(__file__).parent
@@ -35,14 +46,41 @@ class ToolRegistry:
         self._tools[tool.name] = tool
         print(f"Tool registered: {tool.name}")
 
-    def get_tool(self, name: str) -> BaseTool:
-        return self._tools.get(name)
+    def get_tool(self, name: str):
+        """Return a tool by name (BaseTool or native SDK Tool)."""
+        return self._tools.get(name) or self._native_tools.get(name)
 
     def get_all_schemas(self) -> List[dict]:
-        return [tool.to_schema() for tool in self._tools.values()]
+        """Return JSON schemas for ALL registered tools (both legacy and native)."""
+        schemas = [tool.to_schema() for tool in self._tools.values()]
+        for tool_name, tool_obj in self._native_tools.items():
+            schemas.append({
+                "name": tool_name,
+                "category": self._tool_categories.get(tool_name, "general"),
+                "description": getattr(tool_obj, "description", ""),
+                "parameters": getattr(tool_obj, "parameters", {}),
+            })
+        return schemas
 
     def list_tools(self) -> List[str]:
-        return list(self._tools.keys())
+        return list(self._tools.keys()) + list(self._native_tools.keys())
+
+    def get_all_tool_metadata(self) -> List[dict]:
+        """Return lightweight metadata for all tools (for catalog building)."""
+        metadata = []
+        for t in self._tools.values():
+            metadata.append({
+                "name": t.name,
+                "category": getattr(t, "category", "general"),
+                "description": t.description,
+            })
+        for tool_name, tool_obj in self._native_tools.items():
+            metadata.append({
+                "name": tool_name,
+                "category": self._tool_categories.get(tool_name, "general"),
+                "description": getattr(tool_obj, "description", ""),
+            })
+        return metadata
 
     def to_sdk_tools(
         self,
@@ -61,6 +99,8 @@ class ToolRegistry:
         if route_config.role and route_config.role.allowed_tools:
             allowed_names = set(route_config.role.allowed_tools)
             filtered_tools = [t for t in filtered_tools if t.name in allowed_names]
+        else:
+            allowed_names = None
 
         sdk_tools = []
         for tool in filtered_tools:
@@ -93,6 +133,15 @@ class ToolRegistry:
                 parameters=safe_params,
                 handler=make_handler(tool)
             ))
+
+        # Phase 3a: Include native SDK tools (@define_tool) with category filtering
+        for tool_name, tool_obj in self._native_tools.items():
+            cat = self._tool_categories.get(tool_name, "general")
+            if active_categories and cat not in active_categories:
+                continue
+            if allowed_names and tool_name not in allowed_names:
+                continue
+            sdk_tools.append(tool_obj)
 
         return sdk_tools
 
@@ -181,7 +230,27 @@ class ToolRegistry:
                     sys.modules[module_name] = module
                     spec.loader.exec_module(module)
                     
-                    # Scan for BaseTool subclasses
+                    # --- Phase 3a: Check for @define_tool exports first ---
+                    exported_tools = getattr(module, 'EXPORTED_TOOLS', None)
+                    if exported_tools:
+                        category = getattr(module, 'TOOL_CATEGORY', 'general')
+                        native_count = 0
+                        for tool_obj in exported_tools:
+                            tool_name = getattr(tool_obj, 'name', None)
+                            if not tool_name:
+                                continue
+                            if tool_name in self.CORE_TOOL_NAMES:
+                                print(f"Tool '{tool_name}' is a core tool, skipping auto-load from {f.name}")
+                                continue
+                            self._native_tools[tool_name] = tool_obj
+                            self._tool_categories[tool_name] = category
+                            native_count += 1
+                            print(f"Native SDK tool registered: {tool_name} (category={category})")
+                        if native_count > 0:
+                            print(f"Loaded {native_count} native SDK tools from {f.name}")
+                        continue  # Skip BaseTool scanning for this module
+
+                    # --- Legacy: Scan for BaseTool subclasses ---
                     loaded_count = 0
                     for name, obj in vars(module).items():
                         if isinstance(obj, type) and issubclass(obj, BaseTool) and obj is not BaseTool:
@@ -295,6 +364,8 @@ class ToolRegistry:
             # 1. Clear current tools, but preserve DI core tools
             preserved_tools = {name: self._tools[name] for name in self.CORE_TOOL_NAMES if name in self._tools}
             self._tools.clear()
+            self._native_tools.clear()
+            self._tool_categories.clear()
             self._tools.update(preserved_tools)
             # 2. Reload
             self.load_static_tools()
@@ -311,9 +382,10 @@ class ToolRegistry:
             except Exception as e:
                 print(f"Failed to export skills index: {e}")
 
-            print(f"Refresh complete. Total tools: {len(self._tools)}")
+            total_count = len(self._tools) + len(self._native_tools)
+            print(f"Refresh complete. Total tools: {total_count} (legacy={len(self._tools)}, native={len(self._native_tools)})")
             return {
                 "status": "ok", 
-                "tool_count": len(self._tools), 
+                "tool_count": total_count, 
                 "tools": self.list_tools()
             }

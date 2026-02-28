@@ -21,13 +21,14 @@ class TaskOrchestrator:
 
     def _build_tool_catalog(self, sdk_tools: List[Any]) -> str:
         """Helper to build a compact tool catalog string for the system prompt."""
-        all_tools = list(self.tool_registry._tools.values())
+        all_tool_metadata = self.tool_registry.get_all_tool_metadata()
+        sdk_tool_names = {getattr(st, 'name', '') for st in sdk_tools}
         catalog_by_cat = {}
-        for t in all_tools:
-            cat = getattr(t, 'category', 'general')
+        for meta in all_tool_metadata:
+            cat = meta['category']
             if cat not in catalog_by_cat: catalog_by_cat[cat] = []
-            status = "✅ loaded" if any(t.name == st.name for st in sdk_tools) else "⬇️ inactive (use activate_tools)"
-            catalog_by_cat[cat].append(f"{t.name} ({status})")
+            status = "✅ loaded" if meta['name'] in sdk_tool_names else "⬇️ inactive (use activate_tools)"
+            catalog_by_cat[cat].append(f"{meta['name']} ({status})")
 
         catalog_lines = [f"[{cat.upper()}] " + " | ".join(items) for cat, items in sorted(catalog_by_cat.items())]
         tool_catalog_str = "\n".join(catalog_lines)
