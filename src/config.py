@@ -5,8 +5,8 @@ from typing import Optional
 class Settings(BaseSettings):
     # GitHub Copilot SDK
     COPILOT_GITHUB_TOKEN: str
-    COPILOT_MODEL: str = "claude-3.5-sonnet"
-    COPILOT_EVOLUTION_MODEL: str = "claude-3.5-sonnet" # Model specifically for self-evolution tasks
+    COPILOT_MODEL: str = "claude-sonnet-4.5"
+    COPILOT_EVOLUTION_MODEL: str = "claude-sonnet-4.5" # Model specifically for self-evolution tasks
     COPILOT_MAX_TOKENS: int = 4096
     GITHUB_REPO_NAME: Optional[str] = None # e.g. "owner/repo"
 

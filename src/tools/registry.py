@@ -1,11 +1,14 @@
+import copy
 import importlib
 import importlib.util
 import sys
 import os
 import asyncio
 import logging
-from typing import Dict, List
+from typing import Any, Callable, Awaitable, Dict, List, Optional
 from pathlib import Path
+from copilot.types import Tool, ToolInvocation, ToolResult
+from src.core.interfaces import RouteConfig  # deferred import safe: interfaces does not import registry
 from src.tools.base import BaseTool
 
 logger = logging.getLogger(__name__)
@@ -40,6 +43,58 @@ class ToolRegistry:
 
     def list_tools(self) -> List[str]:
         return list(self._tools.keys())
+
+    def to_sdk_tools(
+        self,
+        route_config: RouteConfig,
+        status_callback: Optional[Callable[..., Awaitable[Any]]] = None,
+        caller_session_id: Optional[str] = None,
+    ) -> list:
+        """Convert filtered BaseTool instances to SDK Tool objects.
+        Replaces the inline get_filtered_sdk_tools() closure in Orchestrator."""
+        active_categories = set(route_config.role.allowed_categories) if route_config.role else set()
+        filtered_tools = list(self._tools.values())
+
+        if active_categories:
+            filtered_tools = [t for t in filtered_tools if getattr(t, 'category', 'general') in active_categories]
+
+        if route_config.role and route_config.role.allowed_tools:
+            allowed_names = set(route_config.role.allowed_tools)
+            filtered_tools = [t for t in filtered_tools if t.name in allowed_names]
+
+        sdk_tools = []
+        for tool in filtered_tools:
+            def make_handler(t_instance):
+                async def handler(invocation: ToolInvocation) -> ToolResult:
+                    try:
+                        args = invocation.get("arguments", {}) or {}
+                        if status_callback:
+                            args["status_callback"] = status_callback
+                        if caller_session_id:
+                            args["caller_session_id"] = caller_session_id
+                        result_data = await t_instance.execute(**args)
+                        return {
+                            "resultType": "success",
+                            "textResultForLlm": str(result_data)[:4000]
+                        }
+                    except Exception as e:
+                        return {"resultType": "failure", "error": str(e)}
+                return handler
+
+            # 🛡️ Defense against "Cannot read properties of undefined (reading 'map')"
+            # The SDK expects 'properties' to exist on 'object' types even if empty.
+            safe_params = copy.deepcopy(tool.parameters) if tool.parameters else {"type": "object"}
+            if safe_params.get("type") == "object" and "properties" not in safe_params:
+                safe_params["properties"] = {}
+
+            sdk_tools.append(Tool(
+                name=tool.name,
+                description=tool.description,
+                parameters=safe_params,
+                handler=make_handler(tool)
+            ))
+
+        return sdk_tools
 
     def _validate_tool_schema(self, tool) -> str:
         """

@@ -36,7 +36,6 @@ my-assistant/
 └── storage/           # 持久化儲存區
     ├── local_memory.json     # 長期記憶 (使用者事實、偏好)
     ├── event_log.json        # 事件紀錄 / 對話摘要 (自動清理)
-    ├── session_mapping.json  # 外部 ID (Telegram) → Copilot SDK UUID 對照表
     └── dynamic_tools/        # AI 自動生成的技能
         └── skills_index.json # 動態技能快速檢索總表
 ```
@@ -140,7 +139,7 @@ curl http://localhost:8081/health
   - 至 [Google 帳戶安全性](https://myaccount.google.com/security) 開啟兩步驟驗證，再建立應用程式密碼填入 `.env` 的 `SMTP_PASS`。
 - **工具啟動時報 `error instantiating tool`**: 表示該工具的原始碼有問題（例如缺少 abstract method 的實作）。請刪除對應的 `.py` 檔案後重新啟動。
 - **`400 invalid_request_body` (CAPIError)**: Session 歷史可能過長或工具 Schema 不合法。
-  - *歷史過長*：系統會自動偵測並重置 Session，繼續對話。若要手動處理，可刪除 `storage/session_mapping.json` 強制建立新 Session。
+  - *歷史過長*：系統會自動偵測並重置 Session，繼續對話。新版 SessionManager 會在下一輪對話自動透過 `resume_session` 重新接續，或失敗時自動建立新 Session，無需手動操作。
   - *Schema 不合法*：確認動態工具的 `parameters` 中，`array` 型別必須有 `items`，`object` 型別必須有 `properties`。可呼叫 `inspect_tool` 工具或查看 `GET /skills/{name}` 確認格式。
 - **Agent 無法讀取儲存好的憑證 (Secret Manager)**：
   - 若在 Windows/macOS **本機**執行，憑證將會存放在作業系統的 Credential Manager 內，請檢查 OS 層級管理員 (`keyring` 負責存取)。
@@ -192,11 +191,9 @@ graph TD
         D -->|2. Index Lookup| E[查找文字工具索引 Catalog]
         E -->|3. Context Injection| F[記憶壓縮注入 System Prompt]
         F -->|4. Get Session| G[Session Manager / SDK]
-        G -->|5. Send Message| H{模型決策}
+        G -->|5. send_and_wait| H{模型決策}
         H -->|Tool Call| I[呼叫技能工具]
-        I -->|Tool Result| G
-        H -->|Inactive Tool| J[呼叫 activate_tools 升級]
-        J -->|Signal| D
+        I -->|Tool Result| H
         H -->|Assistant Message| K[串流回傳使用者]
     end
     
@@ -208,17 +205,17 @@ graph TD
 
   1. **實質異步發包 (Non-Blocking Dispatch)**：
      Supervisor 認定需要開發新工具時，使用 `delegate_to_mechanic` 工具建立背景任務（利用 `asyncio.create_task` **並將任務紀錄寫入 class 屬性**，以徹底隔離主執行緒的 `Event Loop` 並避免其被 GC 回收或阻塞）。主對話框瞬間解鎖，並自動回覆「已發包」。
-  2. **雙重極限護盾 (Dual-Timeout Safeguard)**：
-     主循環的 `Orchestrator` 已具備發送與等待的隔離非同步機制：
-     - 若 API 連線本身塞車或卡死，**30 秒**強制切斷，防止連環假性 Timeout（確保不會吞沒連線異常）。
-     - 若執行過久，**120 秒**作為思考極限斷開。
+  2. **SDK send_and_wait 極限護盾 (Timeout Safeguard)**：
+     主循環的 `Orchestrator` 使用 SDK 原生 `send_and_wait()` 統一處理發送與等待：
+     - **120 秒**作為整體回應極限，逾時自動回傳逾時訊息。
+     - 管線異常 (OSError/BrokenPipeError) 自動 invalidate session，下輪自動 resume 或建立新 session。
   3. **背景衝刺與主動推播 (Background Execution & Injection)**：
      背景工程師在獨立 Workspace (`internal_mechanic_workspace`) 開發完畢後，會「合成一個系統事件 (AgentEvent)」並重新呼叫 Supervisor 所在的使用者 Session。
   4. **自然對話完工通知 (Humanized Push Notification)**：
      Supervisor 收到注射進來的系統完工通知後，會以自然口吻產生總結報告，並透過 `status_callback` 直接將內容**推播回 Telegram**。使用者完全無需主動輪詢即可收到完工通知與操作指引。
   5. **意圖路由 (Routing)**：判斷使用者意圖並選取最適模型與初始 System Prompt。
   6. **記憶注入 (Context Injection)**：在每一輪對話開始前，將「長期事實 (Facts)」與「近期事件 (Events)」動態合併至 System Prompt 中。
-  7. **會話管理 (Session Management)**：透過 SDK 的 `mode=replace` 機制更新指令，確保對話歷史不會包含重複的背景資訊。
+  7. **會話管理 (Session Management)**：`SessionManager` 使用 SDK session_id（格式 `{user_id}_{role_id}`）作為唯一識別，優先嘗試 `resume_session` 恢復歷史，失敗時自動建立新 Session。Session 設定啟用 `streaming: True` 並封鎖高危原生工具。
   8. **遞迴調用 (Reasoning Loop)**：模型根據目前的 Context 決定是要直接回覆，還是需要呼叫工具（如網頁搜尋、寫入記憶）。
   9. **自我持久化 (Persistence)**：對話結束後，系統自動摘要本次互動的核心內容並寫入 `event_log.json`。
 

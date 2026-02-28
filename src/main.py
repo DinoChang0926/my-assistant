@@ -47,6 +47,7 @@ async def lifespan(app: FastAPI):
         "github_token": settings.COPILOT_GITHUB_TOKEN,
         "env": os.environ.copy()
     })
+    await client.start()
     
     telegram_bot = None
 
@@ -124,16 +125,22 @@ async def lifespan(app: FastAPI):
     try:
         if telegram_bot:
             await telegram_bot.stop()
-        
+    except Exception as e:
+        print(f"Error stopping telegram: {e}")
+    try:
         if 'scheduler' in locals() and scheduler:
             await scheduler.stop()
-            
+    except Exception as e:
+        print(f"Error stopping scheduler: {e}")
+    try:
         await session_manager.cleanup_all()
+    except Exception as e:
+        print(f"Error cleaning sessions: {e}")
+    try:
         if hasattr(client, 'stop'):
             await client.stop()
-            
     except Exception as e:
-        print(f"Error during shutdown: {e}")
+        print(f"Error stopping client: {e}")
 
 # Apply lifespan to the existing app from rest_api
 rest_api.app.router.lifespan_context = lifespan

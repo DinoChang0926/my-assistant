@@ -40,14 +40,6 @@ class RoleRegistry:
         allowed_categories={"system", "memory", "telegram_ui"}  # Filter by core categories
     )
     
-    CODER_GENERAL = AgentRole(
-        role_id="coder_general",
-        description="Software engineer, trusts model's native coding ability.",
-        system_prompt=None,
-        temperature=0.2,
-        allowed_tools=["inspect_tool", "web_search", "url_fetcher"]
-    )
-    
     ARCHITECT_STRICT = AgentRole(
         role_id="architect_strict",
         description="Strict system architect. No coding allowed. Output Mermaid or Directory structures.",
@@ -82,7 +74,6 @@ class RoleRegistry:
         """Retrieves a role by ID, falling back to SUPERVISOR."""
         roles = {
             "supervisor": cls.SUPERVISOR,
-            "coder_general": cls.CODER_GENERAL,
             "architect_strict": cls.ARCHITECT_STRICT,
             "evolution_mechanic": cls.EVOLUTION_MECHANIC
         }
