@@ -37,7 +37,7 @@ class RoleRegistry:
         ),
         temperature=0.7,
         allowed_tools=[],
-        allowed_categories={"system", "memory", "telegram_ui"}  # Filter by core categories
+        allowed_categories={"system", "memory", "telegram_ui", "task_control"}  # Filter by core categories
     )
     
     ARCHITECT_STRICT = AgentRole(

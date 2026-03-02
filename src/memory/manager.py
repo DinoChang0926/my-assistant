@@ -56,6 +56,7 @@ class SessionManager:
     async def get_or_create(self, session_id: str, route_config: RouteConfig, tools: Optional[list] = None) -> 'SessionWrapper':
         role_id = route_config.role.role_id if route_config.role else "default"
         sdk_id = f"{session_id}_{role_id}"
+        is_supervisor = (role_id == "supervisor")
 
         # 1. Return cached session if available
         if sdk_id in self._sessions:
@@ -63,16 +64,36 @@ class SessionManager:
 
         config = self._build_config(route_config, tools)
 
-        # 2. Try to resume existing session, fall back to creating a new one
+        # 2. Try to resume existing session
         try:
             print(f"[Session] Resuming {sdk_id}...")
             sdk_session = await self.client.resume_session(session_id=sdk_id, config=config)
             print(f"[Session] Resumed {sdk_id}")
         except Exception as e:
-            print(f"[Session] Resume failed ({e}), creating new session {sdk_id}...")
-            config["session_id"] = sdk_id
-            sdk_session = await self.client.create_session(config)
-            print(f"[Session] Created {sdk_id}")
+            err_str = str(e)
+            is_not_found = "Session not found" in err_str or "not found" in err_str.lower()
+
+            if is_supervisor and not is_not_found:
+                # 🛡️ SUPERVISOR 不可侵犯原則：
+                # resume 失敗但 Session 仍存在 → 嘗試安全降級（移除動態 tools）再 resume
+                print(f"[Session] ⚠️ Supervisor resume failed ({e}). Retrying safe-mode (no tools)...")
+                try:
+                    safe_config = self._build_config(route_config, tools=None)
+                    sdk_session = await self.client.resume_session(session_id=sdk_id, config=safe_config)
+                    print(f"[Session] ✅ Supervisor resumed in SAFE MODE (tools stripped): {sdk_id}")
+                except Exception as e2:
+                    # 安全模式也失敗 → 嚴禁 create，直接向上拋出
+                    print(f"[Session] 🚨 Supervisor safe-mode resume also failed ({e2}). Refusing to create new session.")
+                    raise RuntimeError(
+                        f"Supervisor session '{sdk_id}' cannot be resumed and MUST NOT be recreated "
+                        f"to preserve conversation history. Original error: {e}, Safe-mode error: {e2}"
+                    ) from e2
+            else:
+                # 非 Supervisor 或 Session 確實不存在 → 正常 create
+                print(f"[Session] Resume failed ({e}), creating new session {sdk_id}...")
+                config["session_id"] = sdk_id
+                sdk_session = await self.client.create_session(config)
+                print(f"[Session] Created {sdk_id}")
 
         wrapper = SessionWrapper(sdk_id, sdk_session)
         self._sessions[sdk_id] = wrapper

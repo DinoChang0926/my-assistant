@@ -91,7 +91,15 @@ class TaskOrchestrator:
             route_config.system_prompt += "\n\n" + compact_memory
 
         # 3. Get/Create Session
-        wrapper = await self.session_manager.get_or_create(event.session_id, route_config, tools=sdk_tools)
+        try:
+            wrapper = await self.session_manager.get_or_create(event.session_id, route_config, tools=sdk_tools)
+        except RuntimeError as supervisor_err:
+            # 🛡️ Supervisor 不可侵犯原則觸發：session 無法恢復也拒絕重建
+            logger.error(f"[Orchestrator] 🚨 Supervisor session protection triggered: {supervisor_err}")
+            return AgentResponse(
+                content="系統偵測到對話連線異常，但為保護您的歷史記憶，已拒絕重建對話。請稍後再試或重新啟動服務。",
+                tool_calls=[]
+            )
 
         # 4. Send and Wait
         content = ""
