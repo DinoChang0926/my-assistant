@@ -1,4 +1,6 @@
 import asyncio
+import sys
+import os
 from typing import Dict, Optional, Any
 from copilot import CopilotClient
 
@@ -50,6 +52,25 @@ class SessionManager:
 
         if tools:
             config["tools"] = tools
+
+        # Phase 3: Connect to local MCP server
+        # We use sys.executable to ensure we use the same environment/venv
+        # We set PYTHONPATH to include the project root so 'my_tools' can be found if needed,
+        # but here we point directly to server.py.
+        server_path = os.path.abspath(os.path.join(os.getcwd(), "my-tools", "server.py"))
+        
+        config["mcp_servers"] = {
+            "my-tools": {
+                "type": "stdio",
+                "command": sys.executable,
+                "args": [server_path],
+                "env": {
+                    **os.environ,
+                    "PYTHONPATH": os.getcwd(),
+                    "STORAGE_PATH": os.path.abspath(settings.SESSION_STORAGE_PATH)
+                }
+            }
+        }
 
         return config
 

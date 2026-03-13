@@ -15,7 +15,7 @@
 - **自動故障修復 (Auto-Recovery)**: 偵測到 SDK 管道中斷或 400 Overflow 時，會自動支援重置 Session。且針對 400 Reset 加入了 120 秒超時保護與監聽器重綁機制。
 - **異步主動回饋機制 (True Async Feedback)**: 背景委派任務完工後，會透過系統事件主動注入主助理工作階段，由主助理以自然語言推播通知，完全不需使用者輪詢。
 - **依賴管理**：以 `pyproject.toml` 為唯一套件定義來源，`requirements.txt` 同步維護最低版本限制。防止 Agent 動態安裝未知依賴。（建議使用 `pip-compile` 生成完全鎖定的 lock file）
-- **GitOps PR 工作流 🚧 (規劃中)**: 自動建立 GitHub Branch 並發起 PR，實現人類在環 (Human-in-the-loop) 的代碼審核。
+- **GitOps PR 工作流 🚧 (規劃中)**: 工具的建立與修改將改透過 GitHub Branch 與 PR 進行，實現人類在環 (Human-in-the-loop) 的代碼審核。
 
 ## 📁 目錄結構
 
@@ -28,16 +28,14 @@ my-assistant/
 │   ├── memory/        # 記憶層 (Session Manager, Session Mapping)
 │   └── tools/         # 技能層骨架 (Registry, BaseTool, Meta-Skills)
 │       └── static/    # 元技能 (create, inspect, reload, task_control, delegate_mechanic)
-├── my-tools/          # 獨立工具層 (Phase 1 分離)
-│   ├── atomic/        # 預建原子工具 (web_search, url_fetcher, google_auth, local_memory...)
-│   ├── server.py      # Phase 2 MCP Server 入口 (預留)
+├── my-tools/          # 獨立工具層 (Phase 3 MCP)
+│   ├── atomic/        # MCP 伺服器託管的原子工具
+│   ├── server.py      # MCP 伺服器入口 (FastMCP)
 │   └── pyproject.toml # 工具專屬依賴宣告
 ├── requirements.txt   # 鎖定版依賴清單 (pip install -r requirements.txt)
 └── storage/           # 持久化儲存區
     ├── local_memory.json     # 長期記憶 (使用者事實、偏好)
-    ├── event_log.json        # 事件紀錄 / 對話摘要 (自動清理)
-    └── dynamic_tools/        # AI 自動生成的技能
-        └── skills_index.json # 動態技能快速檢索總表
+    └── event_log.json        # 事件紀錄 / 對話摘要 (自動清理)
 ```
 
 ## 🧰 內建原子工具 (Atomic Tools)
@@ -232,19 +230,16 @@ graph TD
 ```
 ┌─────────────────── Docker Container ───────────────────┐
 │                                                        │
-│  ┌──────────────────────┐   stdio / UDS                │
+│  ┌──────────────────────┐   stdio                      │
 │  │  assistant-brain     │◄══════════════►┐             │
 │  │  (主進程)            │                │             │
 │  │  ├─ FastAPI Server   │   ┌────────────┴───────────┐ │
 │  │  ├─ Orchestrator     │   │  my-tools (子進程)     │ │
 │  │  ├─ SessionManager   │   │  MCP Server (stdio)    │ │
-│  │  ├─ Telegram Bot     │   │  ├─ Static Tools       │ │
-│  │  └─ Router           │   │  ├─ Dynamic Tools      │ │
-│  └──────────────────────┘   │  ├─ Hot Reload         │ │
-│                              │  └─ @define_tool       │ │
-│  Shared Volume:              └────────────────────────┘ │
-│  /app/storage/dynamic_tools/                            │
-│  /app/my-tools/                                         │
+│  │  ├─ Telegram Bot     │   │  ├─ Atomic Tools       │ │
+│  │  └─ Router           │   │  └─ @define_tool       │ │
+│  └──────────────────────┘   └────────────────────────┘ │
+│                                                        │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -252,26 +247,16 @@ graph TD
 
 | 階段 | 里程碑 | 工具位置 | 載入方式 | 改動範圍 |
 |---|---|---|---|---|
-| **Phase 0** | ✅ 已完成 | `src/tools/static/` + `storage/dynamic_tools/` | Python import + Subprocess | — |
-| **Phase 1<br>程式碼分離** | ✅ 已完成 | `my-tools/atomic/` + `src/tools/static/` (元技能) | Python import（同容器內路徑引用） | `ToolRegistry` 路徑調整，`Dockerfile COPY` 新增 `my-tools/` |
-| **Phase 2<br>SDK 對齊** | ✅ 已完成 | 同上 | `@define_tool` + Pydantic（原生 SDK Tool） | 原子工具改寫，`ToolRegistry` 雙軌支援 |
-| **Phase 3<br>MCP stdio** | 🔜 規劃中 | `my-tools/` 暴露 MCP stdio Server | SDK Session 原生 `mcp_servers` 設定 | 新增 `server.py`，ToolRegistry 弱化為僅管動態工具 |
-
-### Agent 自我進化適配
-
-| 行為 | Phase 0~2 (現狀) | Phase 3 MCP (規劃中) |
-|---|---|---|
-| Mechanic 寫入新工具 | 寫入 `storage/dynamic_tools/` | 同左（MCP Server 掃描同目錄） |
-| 工具生效方式 | `reload_tools` → Registry 重掃 | `reload_tools` → 通知 MCP Server 重掃 |
-| 工具執行隔離 | `SubprocessDynamicTool` (15s timeout) | MCP Server 子進程內執行（同等隔離） |
-| 靜態工具格式 | `@define_tool` + Pydantic (SDK 原生) | MCP Server 暴露，SDK 自動發現 |
-| 主流程改動 | — | ToolRegistry 弱化，僅 `reload_tools` 改為發送 MCP reload signal |
+| **Phase 0~2** | ✅ 已廢棄 | `storage/dynamic_tools/` + `my-tools/atomic/` | Python import + Subprocess | 過渡期架構 |
+| **Phase 3<br>MCP stdio** | ✅ 已完成 | `my-tools/` 暴露 MCP stdio Server | SDK Session 原生 `mcp_servers` 設定 | 新增 `server.py`，完成路徑解析。<br>`ToolRegistry` 大幅弱化，僅保留元技能。 |
 
 ### GitOps PR 工作流 🚧 (規劃中)
 
-- Evolution Mechanic 開發完工具後，自動建立 GitHub Branch 並發起 PR
-- 實現 **Human-in-the-loop** 的代碼審核，正式合併後才部署至生產環境
-- 搭配 Monorepo 結構，PR 範圍可精確限定於 `my-tools/` 子目錄
+- Agent 可透過閱讀原始碼了解現有的 MCP 工具實作。
+- 需要擴充工具時，Agent 將修改 `my-tools/atomic/` 下的對應腳本。
+- 自動建立 GitHub Branch 並發起 PR。
+- 實現 **Human-in-the-loop** 的代碼審核，正式合併後才部署至生產環境。
+- 搭配 Monorepo 結構，確保所有變更皆可追溯與重現。
 
 ---
 Developed with ❤️ for AI Agent research.

@@ -21,22 +21,15 @@ class TaskOrchestrator:
 
     def _build_tool_catalog(self, sdk_tools: List[Any]) -> str:
         """Helper to build a compact tool catalog string for the system prompt."""
-        all_tool_metadata = self.tool_registry.get_all_tool_metadata()
-        sdk_tool_names = {getattr(st, 'name', '') for st in sdk_tools}
-        catalog_by_cat = {}
-        for meta in all_tool_metadata:
-            cat = meta['category']
-            if cat not in catalog_by_cat: catalog_by_cat[cat] = []
-            status = "✅ loaded" if meta['name'] in sdk_tool_names else "⬇️ inactive (use activate_tools)"
-            catalog_by_cat[cat].append(f"{meta['name']} ({status})")
-
-        catalog_lines = [f"[{cat.upper()}] " + " | ".join(items) for cat, items in sorted(catalog_by_cat.items())]
-        tool_catalog_str = "\n".join(catalog_lines)
+        sdk_tool_names = [getattr(st, 'name', '') for st in sdk_tools]
+        
+        tool_catalog_str = " | ".join(filter(None, sdk_tool_names))
 
         return (
             "\n\n[CRITICAL]: 不要輸出思考過程，直接呼叫工具即可。\n"
-            "### Tool Catalog (Index):\n" + tool_catalog_str + "\n"
-            "如果你需要 'inactive' 的工具類別，請先呼叫 `activate_tools(categories=['category_name'])`。"
+            "### Meta-Tools (Local):\n" + tool_catalog_str + "\n"
+            "### App-Tools (MCP):\n"
+            "所有原子工具與應用程式邏輯均已由系統底層的 MCP 伺服器 (FastMCP) 啟動，請直接呼叫或詢問使用者有哪些工具可用。"
         )
 
     async def execute(self, event: AgentEvent, original_route_config: RouteConfig, status_callback: Optional[Callable[[str], Awaitable[None]]] = None) -> AgentResponse:

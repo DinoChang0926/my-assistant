@@ -59,33 +59,21 @@ async def lifespan(app: FastAPI):
         tool_registry = ToolRegistry()
         
         # Initialize Meta-Tools with Dependency Injection
-        from .tools.static.create_tool import CreateToolTool
-        from .tools.static.reload_tools import ReloadToolsTool
-        from .tools.static.delegate_mechanic import DelegateToMechanicTool
         from .tools.static.task_control import TaskStatusTool, CancelTaskTool
         from src.brain.task_manager import task_manager
         
-        create_tool_instance = CreateToolTool(registry=tool_registry)
-        reload_tools_instance = ReloadToolsTool(registry=tool_registry)
-        delegate_tool_instance = DelegateToMechanicTool(orchestrator=None, task_manager=task_manager)
         task_status_instance = TaskStatusTool(task_manager=task_manager)
         cancel_task_instance = CancelTaskTool(task_manager=task_manager)
         
         # Manually register DI tools
-        tool_registry.register(create_tool_instance)
-        tool_registry.register(reload_tools_instance)
-        tool_registry.register(delegate_tool_instance)
         tool_registry.register(task_status_instance)
         tool_registry.register(cancel_task_instance)
-        print(f"[System] Registered Meta-Skills with DI: {create_tool_instance.name}, {reload_tools_instance.name}, {delegate_tool_instance.name}, {task_status_instance.name}, {cancel_task_instance.name}")
+        print(f"[System] Registered Meta-Skills with DI: {task_status_instance.name}, {cancel_task_instance.name}")
         
         # Load other static and dynamic tools
         await tool_registry.refresh()
         
         orchestrator = TaskOrchestrator(session_manager, tool_registry)
-        
-        # Late binding for orchestrator
-        delegate_tool_instance.orchestrator = orchestrator
         
         router = IntentClassifier()
         gateway = UnifiedGateway(router, orchestrator)
