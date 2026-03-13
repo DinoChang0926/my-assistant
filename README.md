@@ -21,21 +21,32 @@
 
 ```text
 my-assistant/
+├── .agents/             # Copilot Agent 設定 (rules, skills, workflows)
 ├── src/
-│   ├── core/          # 標準化事件與介面定義
-│   ├── perception/    # 感知層 (FastAPI, Gateway, Telegram)
-│   ├── brain/         # 大腦層 (Router, Orchestrator, Prompts)
-│   ├── memory/        # 記憶層 (Session Manager, Session Mapping)
-│   └── tools/         # 技能層骨架 (Registry, BaseTool, Meta-Skills)
-│       └── static/    # 元技能 (create, inspect, reload, task_control, delegate_mechanic)
-├── my-tools/          # 獨立工具層 (Phase 3 MCP)
-│   ├── atomic/        # MCP 伺服器託管的原子工具
-│   ├── server.py      # MCP 伺服器入口 (FastMCP)
-│   └── pyproject.toml # 工具專屬依賴宣告
-├── requirements.txt   # 鎖定版依賴清單 (pip install -r requirements.txt)
-└── storage/           # 持久化儲存區
-    ├── local_memory.json     # 長期記憶 (使用者事實、偏好)
-    └── event_log.json        # 事件紀錄 / 對話摘要 (自動清理)
+│   ├── config.py        # 全域設定 (Pydantic Settings, 讀取 .env)
+│   ├── main.py          # 啟動入口 (FastAPI lifespan + Telegram)
+│   ├── core/            # 標準化事件與介面定義
+│   ├── perception/      # 感知層 (FastAPI, Gateway, Scheduler, Telegram)
+│   ├── brain/           # 大腦層 (Router, Orchestrator, Prompts, TaskManager)
+│   ├── memory/          # 記憶層 (SessionManager)
+│   ├── tools/           # 技能層骨架 (Registry, BaseTool)
+│   │   └── static/      # 元技能 (create, inspect, reload, task_control, delegate_mechanic)
+│   └── utils/           # 共用工具 (SecretManager)
+├── my-tools/            # 獨立工具層 (Phase 3 MCP)
+│   ├── atomic/          # MCP 伺服器託管的原子工具
+│   ├── server.py        # MCP 伺服器入口 (FastMCP)
+│   └── pyproject.toml   # 工具專屬依賴宣告
+├── scripts/             # 除錯與診斷腳本
+├── tests/               # 自動化測試
+├── requirements.txt     # 鎖定版依賴清單
+└── storage/             # 持久化儲存區
+    ├── local_memory.json       # 長期記憶 (使用者事實、偏好)
+    ├── event_log.json          # 事件紀錄 / 對話摘要 (自動清理)
+    ├── .secrets.enc            # Docker 環境加密憑證檔
+    ├── copilot_sdk/            # SDK Session 持久化資料
+    ├── google_credentials.json # Google API 憑證
+    └── dynamic_tools/          # 自進化產生的動態技能
+        └── skills_index.json   # 工具文字索引 (供 activate_tools 查詢)
 ```
 
 ## 🧰 內建原子工具 (Atomic Tools)
@@ -44,7 +55,6 @@ my-assistant/
 |---|---|
 | `web_search` | 使用 DuckDuckGo 搜尋網頁 |
 | `url_fetcher` | 抓取網頁內容 (BeautifulSoup) |
-| `stock_loader` | 查詢即時與歷史股價 (yfinance) |
 | `google_auth` | Google API OAuth2 認證 |
 | `google_calendar` | 讀寫 Google 行事曆事件 |
 | `activate_tools` | 動態激活/載入指定類別的工具 |
@@ -67,9 +77,15 @@ cp .env.example .env
 
 必填變數：
 
-- `COPILOT_GITHUB_TOKEN`: GitHub Token (需具備 `repo` 與 Copilot 相關權限)。
-- `GITHUB_REPO_NAME`: PR 目標儲存庫 (格式: `owner/repo`)。**選填** (GitOps PR 功能實作後才需要)。
-- `TELEGRAM_BOT_TOKEN`: 用於啟動 Telegram Bot (選填)。設定後自動啟動，並透過 Session Mapping 實現無縫的會話接續。
+| 變數名稱 | 必填 | 說明 |
+|---|---|---|
+| `COPILOT_GITHUB_TOKEN` | ✅ | GitHub Token (需具備 Copilot 相關權限) |
+| `TELEGRAM_BOT_TOKEN` | 選填 | Telegram Bot Token (設定後自動啟動，支援 Session Mapping 無縫接續) |
+| `COPILOT_MODEL` | 選填 | 主對話模型 (預設: `claude-sonnet-4.5`) |
+| `COPILOT_EVOLUTION_MODEL` | 選填 | 自進化專用模型 (預設: `claude-sonnet-4.5`) |
+| `GITHUB_REPO_NAME` | 選填 | PR 目標儲存庫 (格式: `owner/repo`，GitOps 功能規劃中) |
+| `SECRET_MASTER_KEY` | 選填 | Docker 環境下加密憑證用的主金鑰 (初次啟動時自動生成) |
+| `SMTP_HOST` / `SMTP_USER` / `SMTP_PASS` | 選填 | 郵件發送設定 (Gmail 需使用應用程式密碼) |
 
 ### 2. 安裝
 
@@ -81,7 +97,7 @@ cp .env.example .env
 docker-compose up --build
 ```
 
-啟動後服務監聽於器內的 **port 8000**，是否 `docker-compose.yml` 將其映射到外部可自行調整（預設映射為 `8081:8000`）：
+啟動後服務監聽於容器內的 **port 8000**，`docker-compose.yml` 預設映射為 `8081:8000`，可自行調整：
 
 ```bash
 # REST API 存取地址
@@ -121,13 +137,17 @@ curl http://localhost:8081/health
    python -m src.main
    ```
 
-### 3. Skills API 端點
+### 3. REST API 端點
 
-本系統提供專用的 API 來管理與監控代理人的技能：
+系統啟動後預設監聽 `0.0.0.0:8000`，Docker 映射為 `8081:8000`。
 
-- **`GET /skills`**: 列出當前所有已註冊的技能及其詳細參數規範。
-- **`POST /skills/reload`**: 觸發熱重載，立即使新編寫的技能生效。
-- **`GET /skills/{name}`**: 查詢特定技能的實作細節與 Schema。
+| 方法 | 路徑 | 說明 |
+|---|---|---|
+| `GET` | `/health` | 健康檢查 |
+| `POST` | `/chat` | 對話端點 (接受 `{"content": "..."}`) |
+| `GET` | `/skills` | 列出所有已註冊的技能及參數規範 |
+| `POST` | `/skills/reload` | 觸發熱重載，使新技能立即生效 |
+| `GET` | `/skills/{name}` | 查詢特定技能的實作細節與 Schema |
 
 ### 4. 常見問題 (Troubleshooting)
 
