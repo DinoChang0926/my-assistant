@@ -1,15 +1,19 @@
 import sys
-import os
 import asyncio
 import traceback
+from pathlib import Path
 
-# Add src to path
-sys.path.append(os.getcwd())
+# Add project root to path (cwd-independent)
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.append(str(PROJECT_ROOT))
 
 from src.tools.registry import ToolRegistry
 
 async def main():
-    with open("diagnose_output.txt", "w", encoding="utf-8") as log_file:
+    log_path = Path(__file__).resolve().with_name("diagnose_output.txt")
+    with open(log_path, "w", encoding="utf-8") as log_file:
+        original_stdout = sys.stdout
+        original_stderr = sys.stderr
         sys.stdout = log_file
         sys.stderr = log_file
         
@@ -35,6 +39,9 @@ async def main():
                 print(f"Tool: {name} (loaded from {tool.__class__.__module__})")
         except Exception:
             traceback.print_exc()
+        finally:
+            sys.stdout = original_stdout
+            sys.stderr = original_stderr
 
 if __name__ == "__main__":
     asyncio.run(main())

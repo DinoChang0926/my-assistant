@@ -54,6 +54,11 @@ if not ok: sys.exit(1)
 python -m src.main
 ```
 - **驗證**：觀察啟動 log 確認所有工具正常載入，透過 Telegram 或 REST API 驗證功能。
+- **除錯 Log 檢查順序（必做）**：
+  1. `storage/debug.log`（主程式 runtime log）
+  2. `scripts/diagnose_output.txt`（診斷腳本輸出）
+  3. `storage/event_log.json`（事件摘要，非完整 traceback）
+- **高優先錯誤排查**：若遇到 `BrokenPipeError`、`OSError: [Errno 22]`、`400 invalid_request_body`，先比對 `storage/debug.log` 關鍵字，再決定是否進行 Session 重建或 Schema 修正。
 
 ### 4. Docker 環境驗證 (Container Validation)
 - **架構異動檢查**：若本次變更涉及以下類型的架構調整，**必須同步檢查並更新 Docker 相關配置**：

@@ -151,6 +151,13 @@ curl http://localhost:8081/health
 
 ### 4. 常見問題 (Troubleshooting)
 
+#### 除錯 Log 地圖
+
+- `storage/debug.log`：主程式 runtime log。優先查看 traceback、模組名稱與錯誤時間戳。
+- `scripts/diagnose_output.txt`：`scripts/diagnose_tools.py` 的診斷輸出，適合用於工具載入異常排查。
+- `storage/event_log.json`：近期事件摘要與流程紀錄，不等同完整例外堆疊。
+- 建議排查順序：先看 `storage/debug.log`，再看 `scripts/diagnose_output.txt`，最後用 `storage/event_log.json` 補流程脈絡。
+
 - **Failed to list models (400)**: 代表 `COPILOT_GITHUB_TOKEN` 無效、過期或權限不足。請重新生成 Token 並確保勾選 `repo` 與 `Copilot` 相關權限（若有）。
 - **ModuleNotFoundError: No module named 'src'**: 請確認您是在專案根目錄執行，且使用 `python -m src.main` 而非 `python src/main.py`。
 - **SMTPAuthenticationError (535)**: 若使用 Gmail，須使用**應用程式密碼 (App Password)** 而非登入密碼。

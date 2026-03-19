@@ -4,8 +4,8 @@ trigger: always_on
 
 # 專案開發規範
 
-- **工作流強制執行協定 (Workflow-First Protocol)**：任何涉及 `src/` 變更的任務，**必須**優先讀取對應的工作流檔案（如 `.agent/workflows/dev-flow.md`），並透過 todo list 追蹤其步驟的完成狀態。禁止跳過任何標註為「必做」的步驟（如同步更新文件）。
-- **同步更新文件**：依照 `.agent/workflows/dev-flow.md` 第 4 步規範執行。功能驗證後，必須在**同一次對話 (session)** 內同步更新 `README.md`，不可留待後續對話補充。
+- **工作流強制執行協定 (Workflow-First Protocol)**：任何涉及 `src/` 變更的任務，**必須**優先讀取對應的工作流檔案（如 `.agents/workflows/dev-flow.md`），並透過 todo list 追蹤其步驟的完成狀態。禁止跳過任何標註為「必做」的步驟（如同步更新文件）。
+- **同步更新文件**：依照 `.agents/workflows/dev-flow.md` 第 4 步規範執行。功能驗證後，必須在**同一次對話 (session)** 內同步更新 `README.md`，不可留待後續對話補充。
 - **任務交付合規表 (Compliance Table)**：在向使用者交付最終成果前，必須在對話中列出合規表，逐一確認工作流中所有必要步驟（語法檢查、本機測試、文件同步）是否已完成。未達標前禁止宣告任務結束。
 - **雙軌驗證流程**：
     1. 優先在虛擬環境 (`venv`) 進行本機功能開發與測試。
@@ -35,3 +35,13 @@ trigger: always_on
 - **測試集中管理**：所有撰寫的測試程式碼（不論單元測試、整合測試），**必須**統一放置於 `tests/` 目錄下管理，保持專案根目錄整潔。
 - **除錯與專用腳本集中管理**：所有用來臨時除錯、實驗功能或特定任務的獨立腳本（如 `debug_*.py`, `diagnose_*.py` 等），**必須**統一收納於 `scripts/` 目錄內。
 - **測試與程式碼同步**：當架構變更導致方法簽名、模組路徑或核心流程改變時，**必須**同步檢查 `tests/` 下是否有測試依賴了被修改的介面，並於同一次對話內更新或移除已失效的測試。禁止留下測試對象為空殼或已不存在之方法的測試檔案。
+
+# 除錯與記錄守則
+
+- **除錯 Log 來源必查順序**：
+    1. `storage/debug.log`：主程式 runtime log（由 `src/main.py` 的 `logging.FileHandler` 輸出）。
+    2. `scripts/diagnose_output.txt`：診斷腳本彙整輸出。
+    3. `storage/event_log.json`：事件摘要與近期流程狀態（非完整 traceback）。
+- **除錯時必附資訊**：回報問題或提交修復前，必須附上「時間戳、模組名稱、錯誤堆疊/訊息、重現步驟、影響範圍」。
+- **高優先級錯誤處理**：若發生 `BrokenPipeError`、`OSError: [Errno 22]`、`400 invalid_request_body`，必須先檢查 `storage/debug.log` 是否出現對應關鍵字，再決定是否重建 Session 或調整工具 Schema。
+- **禁止以 event log 取代 runtime log**：`event_log.json` 僅供流程回溯，不得作為程式異常的唯一判斷依據。

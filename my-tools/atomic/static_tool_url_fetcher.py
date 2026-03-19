@@ -1,20 +1,9 @@
-from copilot.tools import define_tool
-from pydantic import BaseModel, Field
-
-
-class URLFetcherParams(BaseModel):
-    url: str = Field(description="要抓取的網頁 URL")
-    extract_text: bool = Field(default=True, description="是否僅提取純文字 (預設為 true)")
-
-
-@define_tool(
-    description="抓取指定 URL 的網頁內容。會自動處理 User-Agent 並回傳網頁的純文字內容與標題。"
-)
-async def url_fetcher(params: URLFetcherParams) -> dict:
+async def url_fetcher(url: str, extract_text: bool = True) -> dict:
+    """抓取指定 URL 的網頁內容。會自動處理 User-Agent 並回傳網頁的純文字內容與標題。"""
     import requests
     from bs4 import BeautifulSoup
 
-    if not params.url:
+    if not url:
         return {"status": "error", "message": "Missing url parameter."}
 
     headers = {
@@ -26,10 +15,10 @@ async def url_fetcher(params: URLFetcherParams) -> dict:
     }
 
     try:
-        response = requests.get(params.url, headers=headers, timeout=15)
+        response = requests.get(url, headers=headers, timeout=15)
         response.raise_for_status()
 
-        if params.extract_text:
+        if extract_text:
             soup = BeautifulSoup(response.text, "html.parser")
 
             # Remove script and style elements
@@ -47,7 +36,7 @@ async def url_fetcher(params: URLFetcherParams) -> dict:
                 "data": {
                     "title": title,
                     "content": truncated_text,
-                    "url": params.url,
+                    "url": url,
                 },
             }
         else:
@@ -55,14 +44,9 @@ async def url_fetcher(params: URLFetcherParams) -> dict:
                 "status": "success",
                 "data": {
                     "content": response.text[:2000],
-                    "url": params.url,
+                    "url": url,
                 },
             }
 
     except Exception as e:
         return {"status": "error", "message": f"Failed to fetch URL: {str(e)}"}
-
-
-# --- Module exports for registry discovery (Phase 3a convention) ---
-EXPORTED_TOOLS = [url_fetcher]
-TOOL_CATEGORY = "web"

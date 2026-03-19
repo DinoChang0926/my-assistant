@@ -1,16 +1,14 @@
 import json
+import os
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional
-
-from copilot.tools import define_tool
-from pydantic import BaseModel, Field
 
 
 # --- Helper functions (module-level, replacing instance methods) ---
 
 def _get_file_path(data_type: str) -> Path:
-    storage_dir = Path("storage")
+    storage_dir = Path(os.environ.get("STORAGE_PATH", "storage"))
     storage_dir.mkdir(exist_ok=True)
     filename = "local_memory.json" if data_type == "fact" else "event_log.json"
     return storage_dir / filename
@@ -57,45 +55,23 @@ def _cleanup_event_log(logs: list) -> list:
 
 # --- Tool definition ---
 
-class LocalMemoryParams(BaseModel):
-    action: str = Field(
-        description="要執行的操作：set(儲存), get(讀取), delete(刪除), list(列出所有鍵值)"
-    )
-    data_type: str = Field(
-        default="fact",
-        description=(
-            "資料類型：'fact' (長期事實，存於 local_memory.json) "
-            "或 'event' (事件紀錄，存於 event_log.json)"
-        ),
-    )
-    key: Optional[str] = Field(
-        default=None,
-        description="記憶的鍵值 (例如：'user_name', 'session_summary')。",
-    )
-    value: Optional[str] = Field(
-        default=None,
-        description="記憶的具體內容。僅在 action 為 'set' 時需要。",
-    )
+async def local_memory(
+    action: str, 
+    data_type: str = "fact", 
+    key: str = "", 
+    value: str = ""
+) -> dict:
+    """
+    儲存與讀取記憶的工具。支援兩種類型：
+    1. 'fact' (長期事實): 用於記錄使用者偏好、姓名、重要人事物。會永久保留。
+    2. 'event' (事件紀錄): 用於記錄對話摘要、任務執行結果。會定期自動清理。
 
-
-@define_tool(
-    description=(
-        "儲存與讀取記憶的工具。支援兩種類型：\n"
-        "1. 'fact' (長期事實): 用於記錄使用者偏好、姓名、重要人事物。會永久保留。\n"
-        "2. 'event' (事件紀錄): 用於記錄對話摘要、任務執行結果。會定期自動清理。\n\n"
-        "支援的操作(action)：\n"
-        "- 'set': 儲存記憶 (需提供 data_type, key, value)。\n"
-        "- 'get': 讀取特定記憶 (需提供 data_type, key)。\n"
-        "- 'delete': 刪除特定記憶 (需提供 data_type, key)。\n"
-        "- 'list': 列出所有鍵值 (需提供 data_type)。"
-    )
-)
-async def local_memory(params: LocalMemoryParams) -> dict:
-    action = params.action
-    data_type = params.data_type
-    key = params.key
-    value = params.value
-
+    支援的操作(action)：
+    - 'set': 儲存記憶 (需提供 data_type, key, value)。
+    - 'get': 讀取特定記憶 (需提供 data_type, key)。
+    - 'delete': 刪除特定記憶 (需提供 data_type, key)。
+    - 'list': 列出所有鍵值 (需提供 data_type)。
+    """
     if not action:
         return {"status": "error", "message": "Missing 'action' parameter."}
 
@@ -163,8 +139,3 @@ async def local_memory(params: LocalMemoryParams) -> dict:
         return {"status": "not_found", "message": "Nothing to delete."}
 
     return {"status": "error", "message": f"Unknown action '{action}'."}
-
-
-# --- Module exports for registry discovery (Phase 3a convention) ---
-EXPORTED_TOOLS = [local_memory]
-TOOL_CATEGORY = "memory"
