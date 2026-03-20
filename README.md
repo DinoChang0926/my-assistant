@@ -157,6 +157,8 @@ curl http://localhost:8081/health
 - `scripts/diagnose_output.txt`：`scripts/diagnose_tools.py` 的診斷輸出，適合用於工具載入異常排查。
 - `storage/event_log.json`：近期事件摘要與流程紀錄，不等同完整例外堆疊。
 - 建議排查順序：先看 `storage/debug.log`，再看 `scripts/diagnose_output.txt`，最後用 `storage/event_log.json` 補流程脈絡。
+- Agent 可透過 `log_reader` 工具查詢上述來源，建議先用 `mode='summary'`，再用 `keyword` 縮小範圍。
+- 為避免 session 過長，單次查詢輸出預設上限為 2000 字元，不建議直接要求整份 raw log。
 
 - **Failed to list models (400)**: 代表 `COPILOT_GITHUB_TOKEN` 無效、過期或權限不足。請重新生成 Token 並確保勾選 `repo` 與 `Copilot` 相關權限（若有）。
 - **ModuleNotFoundError: No module named 'src'**: 請確認您是在專案根目錄執行，且使用 `python -m src.main` 而非 `python src/main.py`。

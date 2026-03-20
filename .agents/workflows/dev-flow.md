@@ -60,6 +60,10 @@ python -m src.main
   2. `scripts/diagnose_output.txt`（診斷腳本輸出）
   3. `storage/event_log.json`（事件摘要，非完整 traceback）
 - **高優先錯誤排查**：若遇到 `BrokenPipeError`、`OSError: [Errno 22]`、`400 invalid_request_body`，先比對 `storage/debug.log` 關鍵字，再決定是否進行 Session 重建或 Schema 修正。
+- **log_reader 驗證（若本次有改工具層）**：
+  1. 驗證 `source=debug/diagnose/event` 均可回傳結果（或合理 not_found）。
+  2. 驗證 `mode=summary` 為預設查詢模式。
+  3. 驗證單次回傳不超過 2000 字元，避免 session 膨脹。
 
 ### 4. Docker 環境驗證 (Container Validation)
 - **架構異動檢查**：若本次變更涉及以下類型的架構調整，**必須同步檢查並更新 Docker 相關配置**：

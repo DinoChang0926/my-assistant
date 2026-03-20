@@ -26,12 +26,14 @@ from atomic.static_tool_secret_manager import (
 from atomic.static_tool_google_auth import google_auth
 from atomic.static_tool_google_calendar import google_calendar
 from atomic.static_tool_schedule_reminder import schedule_reminder
+from atomic.static_tool_log_reader import log_reader
 
 # 註冊工具
 for fn in [
     web_search, url_fetcher, local_memory,
     secret_manager_store, secret_manager_read, secret_manager_delete,
-    google_auth, google_calendar, schedule_reminder
+    google_auth, google_calendar, schedule_reminder,
+    log_reader
 ]:
     mcp.tool()(fn)
 

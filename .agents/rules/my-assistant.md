@@ -46,3 +46,5 @@ trigger: always_on
 - **除錯時必附資訊**：回報問題或提交修復前，必須附上「時間戳、模組名稱、錯誤堆疊/訊息、重現步驟、影響範圍」。
 - **高優先級錯誤處理**：若發生 `BrokenPipeError`、`OSError: [Errno 22]`、`400 invalid_request_body`，必須先檢查 `storage/debug.log` 是否出現對應關鍵字，再決定是否重建 Session 或調整工具 Schema。
 - **禁止以 event log 取代 runtime log**：`event_log.json` 僅供流程回溯，不得作為程式異常的唯一判斷依據。
+- **log_reader 查詢策略**：查詢 log 時必須優先 `mode=summary`，並搭配 `keyword` + `tail_lines` 縮小範圍；除非使用者明確要求展開，否則不得直接使用大段 `raw` 輸出。
+- **log_reader 輸出上限**：單次 `log_reader` 回傳內容建議上限為 2000 字元，嚴禁一次貼出整份 log 內容，避免 session 過長導致 `400 invalid_request_body`。

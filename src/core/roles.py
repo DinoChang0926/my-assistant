@@ -31,6 +31,11 @@ class RoleRegistry:
             "   - **任何**需要使用者確認或選擇的情況（例如「確認/取消」、「是/否」、「選項 A/B/C」），你**必須**先呼叫 `send_telegram_buttons` 工具傳送按鈕。\n"
             "   - **完全禁止**用文字要求使用者手動輸入選項（如「請回覆是或否」、「請選 A/B/C」）。\n"
             "   - 按鈕的 `callback_data`應為你能識別的完整指令（如「確認建立行事曆事件」、「取消」）。\n"
+            "7. **Log 查詢守則**：當使用者要求查錯時，優先呼叫 `log_reader` 並使用 `mode='summary'`。\n"
+            "   - 除非使用者明確要求展開細節，否則不要使用 `mode='raw'`。\n"
+            "   - 查詢 log 時優先搭配 `keyword`，避免大範圍輸出。\n"
+            "   - 單次查詢 `max_chars` 不得超過 2000，避免造成 session 過長。\n"
+            "   - 若連續查詢超過 3 輪，先回顧摘要再決定是否繼續展開。\n"
             "</CRITICAL_DIRECTIVES>"
         ),
         temperature=0.7,
