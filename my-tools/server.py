@@ -42,4 +42,10 @@ if __name__ == "__main__":
     storage_path = os.environ.get("STORAGE_PATH", "storage")
     os.environ["STORAGE_PATH"] = storage_path
     
-    mcp.run()
+    if "--sse" in sys.argv:
+        # 重新初始化 mcp 加入 port 設定以免 run() 找不到
+        mcp.settings.port = 8001
+        print("Starting MCP server in SSE mode on port 8001...")
+        mcp.run(transport="sse")
+    else:
+        mcp.run()

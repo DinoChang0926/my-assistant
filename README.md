@@ -11,6 +11,7 @@
   - **長期事實 (Facts)** → `storage/local_memory.json`：永久儲存使用者個人化資訊。
   - **近期事件 (Events)** → `storage/event_log.json`：具有自動清理與單行壓縮注入機制 (Hard Cap 600ch)。
 - **工具索引架構 (Tool Index Architecture)**: 預設僅載入核心工具集，提供輕量化文字索引，支援透過 `activate_tools` 按需升級 Session 載入完整 Schema，徹底解決 Copilot API Payload 超限問題。
+- **MCP 韌性降級模式 (Degraded Mode)**: `my-tools/server.py` 以 SSE 子行程啟動；若 MCP 啟動失敗或中途異常，主流程仍維持可用，並在背景自動重試重啟，不會直接終止 API 主服務。
 - **安全代碼驗證**: 整合 AST 靜態分析，白名單限制 import 模組，禁止危險函數 (`subprocess`, `eval` 等)。
 - **自動故障修復 (Auto-Recovery)**: 偵測到 SDK 管道中斷或 400 Overflow 時，會自動支援重置 Session。且針對 400 Reset 加入了 120 秒超時保護與監聽器重綁機制。
 - **異步主動回饋機制 (True Async Feedback)**: 背景委派任務完工後，會透過系統事件主動注入主助理工作階段，由主助理以自然語言推播通知，完全不需使用者輪詢。
@@ -168,6 +169,9 @@ curl http://localhost:8081/health
 - **`400 invalid_request_body` (CAPIError)**: Session 歷史可能過長或工具 Schema 不合法。
   - *歷史過長*：系統會自動偵測並重置 Session，繼續對話。新版 SessionManager 會在下一輪對話自動透過 `resume_session` 重新接續，或失敗時自動建立新 Session，無需手動操作。
   - *Schema 不合法*：確認動態工具的 `parameters` 中，`array` 型別必須有 `items`，`object` 型別必須有 `properties`。可呼叫 `inspect_tool` 工具或查看 `GET /skills/{name}` 確認格式。
+- **MCP 無法連線 / `127.0.0.1:8001` 連線拒絕**:
+   - 主流程不會退出，系統會進入 degraded mode 並持續背景重試 MCP 重啟。
+   - SessionManager 會自動以「不掛載 `mcp_servers`」的安全配置重試建立或恢復 Session，讓核心對話流程持續可用。
 - **Agent 無法讀取儲存好的憑證 (Secret Manager)**：
   - 若在 Windows/macOS **本機**執行，憑證將會存放在作業系統的 Credential Manager 內，請檢查 OS 層級管理員 (`keyring` 負責存取)。
   - 若在 **Docker** 環境執行，Secret Manager 會預設回退使用加密檔案 `.secrets.enc`。如果容器重啟後憑證遺失，請檢查是否有一併掛載 `./storage:/app/storage`，且您的 `.env` 內是否有正確的 `SECRET_MASTER_KEY` (初次啟動時自動生成)。

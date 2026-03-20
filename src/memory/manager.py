@@ -32,7 +32,22 @@ class SessionManager:
     def __init__(self, client: CopilotClient):
         self.client = client
         self._sessions: Dict[str, SessionWrapper] = {}
+        self._skip_resume: set = set()  # 標記下次應跳過 resume 直接 create 的 session
         print("SessionManager initialized.")
+
+    @staticmethod
+    def _looks_like_mcp_error(err: Exception) -> bool:
+        err_str = str(err).lower()
+        keywords = [
+            "127.0.0.1:8001",
+            "connection refused",
+            "connect call failed",
+            "mcp",
+            "sse",
+            "failed to fetch",
+            "ecconnrefused",
+        ]
+        return any(k in err_str for k in keywords)
 
     def _build_config(self, route_config: RouteConfig, tools: Optional[list] = None) -> dict:
         """Build session configuration dict from a RouteConfig."""
@@ -57,18 +72,10 @@ class SessionManager:
         # We use sys.executable to ensure we use the same environment/venv
         # We set PYTHONPATH to include the project root so 'my_tools' can be found if needed,
         # but here we point directly to server.py.
-        server_path = os.path.abspath(os.path.join(os.getcwd(), "my-tools", "server.py"))
-        
         config["mcp_servers"] = {
             "my-tools": {
-                "type": "stdio",
-                "command": sys.executable,
-                "args": [server_path],
-                "env": {
-                    **os.environ,
-                    "PYTHONPATH": os.getcwd(),
-                    "STORAGE_PATH": os.path.abspath(settings.SESSION_STORAGE_PATH)
-                }
+                "type": "http",
+                "url": "http://127.0.0.1:8001/sse"
             }
         }
 
@@ -85,52 +92,81 @@ class SessionManager:
 
         config = self._build_config(route_config, tools)
 
-        # 2. Try to resume existing session
-        try:
-            print(f"[Session] Resuming {sdk_id}...")
-            sdk_session = await self.client.resume_session(session_id=sdk_id, config=config)
-            print(f"[Session] Resumed {sdk_id}")
-        except Exception as e:
-            err_str = str(e)
-            is_not_found = "Session not found" in err_str or "not found" in err_str.lower()
+        async def _resume_or_create(target_config: dict):
+            try:
+                print(f"[Session] Resuming {sdk_id}...")
+                resumed = await self.client.resume_session(session_id=sdk_id, config=target_config)
+                print(f"[Session] Resumed {sdk_id}")
+                return resumed
+            except Exception as resume_err:
+                err_str = str(resume_err)
+                is_not_found = "Session not found" in err_str or "not found" in err_str.lower()
 
-            if is_supervisor and not is_not_found:
-                # 🛡️ SUPERVISOR 不可侵犯原則：
-                # resume 失敗但 Session 仍存在 → 嘗試安全降級（移除動態 tools）再 resume
-                print(f"[Session] ⚠️ Supervisor resume failed ({e}). Retrying safe-mode (no tools)...")
-                try:
-                    safe_config = self._build_config(route_config, tools=None)
-                    sdk_session = await self.client.resume_session(session_id=sdk_id, config=safe_config)
-                    print(f"[Session] ✅ Supervisor resumed in SAFE MODE (tools stripped): {sdk_id}")
-                except Exception as e2:
-                    # 安全模式也失敗 → 嚴禁 create，直接向上拋出
-                    print(f"[Session] 🚨 Supervisor safe-mode resume also failed ({e2}). Refusing to create new session.")
-                    raise RuntimeError(
-                        f"Supervisor session '{sdk_id}' cannot be resumed and MUST NOT be recreated "
-                        f"to preserve conversation history. Original error: {e}, Safe-mode error: {e2}"
-                    ) from e2
-            else:
-                # 非 Supervisor 或 Session 確實不存在 → 正常 create
-                print(f"[Session] Resume failed ({e}), creating new session {sdk_id}...")
-                config["session_id"] = sdk_id
-                sdk_session = await self.client.create_session(config)
+                if is_supervisor and not is_not_found:
+                    print(f"[Session] ⚠️ Supervisor resume failed ({resume_err}). Retrying safe-mode (no tools)...")
+                    try:
+                        safe_config = self._build_config(route_config, tools=None)
+                        safe_config.pop("mcp_servers", None)
+                        resumed = await self.client.resume_session(session_id=sdk_id, config=safe_config)
+                        print(f"[Session] ✅ Supervisor resumed in SAFE MODE (tools stripped): {sdk_id}")
+                        return resumed
+                    except Exception as e2:
+                        print(f"[Session] 🚨 Supervisor safe-mode resume also failed ({e2}). Refusing to create new session.")
+                        raise RuntimeError(
+                            f"Supervisor session '{sdk_id}' cannot be resumed and MUST NOT be recreated "
+                            f"to preserve conversation history. Original error: {resume_err}, Safe-mode error: {e2}"
+                        ) from e2
+
+                print(f"[Session] Resume failed ({resume_err}), creating new session {sdk_id}...")
+                create_config = dict(target_config)
+                create_config["session_id"] = sdk_id
+                created = await self.client.create_session(create_config)
                 print(f"[Session] Created {sdk_id}")
+                return created
+
+        # 1.5 如果被標記為 force_recreate，跳過 resume 直接 create
+        if sdk_id in self._skip_resume:
+            self._skip_resume.discard(sdk_id)
+            print(f"[Session] ⚠️ Force-recreate flagged for {sdk_id}, skipping resume...")
+            config["session_id"] = sdk_id
+            sdk_session = await self.client.create_session(config)
+            print(f"[Session] Created (force-recreate) {sdk_id}")
+            wrapper = SessionWrapper(sdk_id, sdk_session)
+            self._sessions[sdk_id] = wrapper
+            return wrapper
+
+        # 2. Try MCP-enabled path first; fallback to MCP-disabled when MCP is unavailable.
+        try:
+            sdk_session = await _resume_or_create(config)
+        except RuntimeError:
+            raise
+        except Exception as e:
+            if self._looks_like_mcp_error(e):
+                print(f"[Session] ⚠️ MCP unavailable ({e}). Retrying without mcp_servers...")
+                no_mcp_config = dict(config)
+                no_mcp_config.pop("mcp_servers", None)
+                sdk_session = await _resume_or_create(no_mcp_config)
+            else:
+                raise
 
         wrapper = SessionWrapper(sdk_id, sdk_session)
         self._sessions[sdk_id] = wrapper
         return wrapper
 
-    def invalidate(self, session_id: str, route_config=None, preserve_history: bool = False):
+    def invalidate(self, session_id: str, route_config=None, preserve_history: bool = False, force_recreate: bool = False):
         """
-        Clears the in-memory session cache entry. On the next request, get_or_create
-        will attempt resume_session first (using the sdk_id), falling back to
-        create_session if the session is broken or not found.
-        preserve_history is kept for API compatibility and has no functional effect.
+        Clears the in-memory session cache entry.
+        If force_recreate=True, the next get_or_create will skip resume and
+        directly create a new session (to break resume→hang→invalidate loops).
         """
         role_id = route_config.role.role_id if (route_config and route_config.role) else "default"
         sdk_id = f"{session_id}_{role_id}"
         self._sessions.pop(sdk_id, None)
-        print(f"[SessionManager] Session invalidated: {sdk_id}")
+        if force_recreate:
+            self._skip_resume.add(sdk_id)
+            print(f"[SessionManager] Session invalidated + force-recreate queued: {sdk_id}")
+        else:
+            print(f"[SessionManager] Session invalidated: {sdk_id}")
 
     async def cleanup_all(self):
         """Clear in-memory references. Sessions remain on server for future resumption."""

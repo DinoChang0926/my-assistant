@@ -97,13 +97,14 @@ class TaskOrchestrator:
         # 4. Send and Wait
         content = ""
         try:
-            response = await wrapper.sdk_session.send_and_wait(
-                {"prompt": event.content}, timeout=120000
+            response = await asyncio.wait_for(
+                wrapper.sdk_session.send_and_wait({"prompt": event.content}),
+                timeout=120.0
             )
             content = response.data.content if response else ""
         except (OSError, BrokenPipeError) as pipe_err:
-            logger.warning(f"[Orchestrator] ⚠️ SDK pipe failure: {pipe_err}. Resetting session...")
-            self.session_manager.invalidate(event.session_id, route_config)
+            logger.warning(f"[Orchestrator] ⚠️ SDK pipe failure: {pipe_err}. Resetting session (force-recreate)...")
+            self.session_manager.invalidate(event.session_id, route_config, force_recreate=True)
             content = "系統管線異常，已重新啟動服務，請再試一次。"
         except asyncio.TimeoutError:
             logger.warning("[Orchestrator] ⚠️ Session wait timeout!")
