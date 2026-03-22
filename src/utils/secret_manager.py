@@ -119,7 +119,14 @@ class EncryptedFileSecretStore(BaseSecretStore):
 
     def _append_key_to_env_file(self, key: str):
         try:
-            with open(".env", "a") as f:
+            # Check if SECRET_MASTER_KEY already exists to prevent duplicates
+            env_path = ".env"
+            if os.path.exists(env_path):
+                with open(env_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        if line.strip().startswith("SECRET_MASTER_KEY="):
+                            return
+            with open(env_path, "a") as f:
                 f.write(f"\n# Auto-generated. Keep this safe to retain your stored secrets.\nSECRET_MASTER_KEY={key}\n")
         except Exception as e:
             logger.error(f"Failed to auto-save SECRET_MASTER_KEY to .env: {e}")

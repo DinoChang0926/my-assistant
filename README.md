@@ -13,7 +13,8 @@
 - **工具索引架構 (Tool Index Architecture)**: 預設僅載入核心工具集，提供輕量化文字索引，支援透過 `activate_tools` 按需升級 Session 載入完整 Schema，徹底解決 Copilot API Payload 超限問題。
 - **MCP 韌性降級模式 (Degraded Mode)**: `my-tools/server.py` 以 SSE 子行程啟動；若 MCP 啟動失敗或中途異常，主流程仍維持可用，並在背景自動重試重啟，不會直接終止 API 主服務。
 - **安全代碼驗證**: 整合 AST 靜態分析，白名單限制 import 模組，禁止危險函數 (`subprocess`, `eval` 等)。
-- **自動故障修復 (Auto-Recovery)**: 偵測到 SDK 管道中斷或 400 Overflow 時，會自動支援重置 Session。且針對 400 Reset 加入了 120 秒超時保護與監聽器重綁機制。
+- **自動故障修復 (Auto-Recovery)**: 偵測到 SDK 管道中斷、`session.idle` timeout、`Session not found` 或 400 Overflow 時，會自動執行保護與重試。Supervisor 角色優先保留既有 Session 歷史，`idle-timeout` 會先用原工具配置重試，避免把「工具不可用」狀態寫入長期對話脈絡。
+- **Session 併發保護 (Concurrency Guard)**: 同一 Session 同時只能處理一則訊息，避免多則訊息對同一 SDK Session 並行 `send_and_wait` 造成 idle-timeout。第二則訊息會立即回覆「仍在處理中」，保護管線穩定。
 - **異步主動回饋機制 (True Async Feedback)**: 背景委派任務完工後，會透過系統事件主動注入主助理工作階段，由主助理以自然語言推播通知，完全不需使用者輪詢。
 - **依賴管理**：以 `pyproject.toml` 為唯一套件定義來源，`requirements.txt` 同步維護最低版本限制。防止 Agent 動態安裝未知依賴。（建議使用 `pip-compile` 生成完全鎖定的 lock file）
 - **GitOps PR 工作流 🚧 (規劃中)**: 工具的建立與修改將改透過 GitHub Branch 與 PR 進行，實現人類在環 (Human-in-the-loop) 的代碼審核。
@@ -105,6 +106,12 @@ docker-compose up --build
 curl http://localhost:8081/health
 ```
 
+若這次是測試驗證用途，結束後請關閉容器避免殘留背景實例：
+
+```bash
+wsl docker compose down
+```
+
 #### 方法 B：本機開發 (Local Development)
 
 若要進行開發或除錯，建議使用虛擬環境：
@@ -172,6 +179,37 @@ curl http://localhost:8081/health
 - **MCP 無法連線 / `127.0.0.1:8001` 連線拒絕**:
    - 主流程不會退出，系統會進入 degraded mode 並持續背景重試 MCP 重啟。
    - SessionManager 會自動以「不掛載 `mcp_servers`」的安全配置重試建立或恢復 Session，讓核心對話流程持續可用。
+   - 系統會先檢查 `http://127.0.0.1:8001/sse` 與 `http://127.0.0.1:8001/status`：
+      - 若本機子程序啟動失敗，但偵測到既有外部 MCP 健康可用，會直接接管既有服務，不進入 degraded mode。
+      - 若 `/status` 暫不可用，會退回僅以 SSE 可達性判斷（相容舊版 MCP）。
+   - 可手動確認狀態：`curl http://127.0.0.1:8001/status`
+   - **降級後自動恢復**：MCP Monitor 偵測到 MCP 重新上線時，會自動清除以無 MCP 建立的 Session cache，下次對話將重新帶 MCP 建立 Session，不需手動重啟。
+   - **啟動時主動驗證**：MCP 啟動後會立即呼叫 `/status`，將 transport、工具數量、工具清單寫入 `storage/debug.log`，測試階段可直接確認 MCP 是否正常掛載。
+   - **Monitor 防抖機制**：首次檢查延遲 10 秒（等 MCP 完整啟動），穩定期間每 15 秒檢查一次。單次失敗不立即重啟，會再等 5 秒重試，連續 2 次失敗才觸發重啟，避免 flapping。
+   - MCP 相關狀態變更（啟動、降級、恢復、Session 升級）均會寫入 `storage/debug.log`（logger: `src.main`），不再僅輸出到 stdout。
+   - SessionManager 的 Session 建立、恢復、降級、升級等操作亦已改用 `logging` 寫入 `storage/debug.log`（logger: `src.memory.manager`），便於追蹤完整流程。
+- **Docker 啟動時 `AttributeError: 'dict' object has no attribute 'cli_path'`**:
+  - 代表容器中的 `github-copilot-sdk` API 版本與本機不同（新版本要求使用 typed config，而非 dict options）。
+  - 專案已內建相容初始化：新舊 SDK 介面會自動分流，不需手動改環境變數。
+- **`Timeout after 60.0s waiting for session.idle`**:
+   - 若發生於 Supervisor Session，系統不會強制重建 Session，會先保留歷史並以原工具配置重試一次。
+   - 若重試仍失敗，才會回傳可重試提示，避免將「本輪降級」訊息寫入長期會話並污染後續判斷。
+   - 針對「新增備忘錄」語句，若兩次 SDK 呼叫都失敗，系統會啟用緊急保底，直接寫入 `storage/local_memory.json`，確保備忘錄不遺失。
+   - **常見成因**：快速連送兩則訊息，導致同一 Session 被併發 `send_and_wait`。已透過 `UnifiedGateway` 的 per-session Lock 防護：第二則訊息會立即回覆「仍在處理中」，不再搶佔 SDK pipe。
+- **`Session not found: <session_id>`**:
+   - 常見於本機快取仍持有舊 Session 物件，但 SDK 端已清除該 Session。
+   - 系統會自動 invalidate 快取並嘗試 force-recreate 單次重送，若仍失敗才回傳可重試訊息。
+- **模型誤判「工具不可用」但實際可用**:
+   - 系統保留模型決策，但新增高風險敘述校正層：若回覆聲稱「降級模式 / 工具不可用 / 儲存失敗」，會先做即時 MCP 探測（`/sse` + `/status`）交叉驗證。
+   - 若探測顯示 MCP 健康，系統會先觸發同輪「模型自我校正重答」一次；重答失敗時才退回附加校正訊息，要求以本輪可驗證結果為準，降低歷史語境造成的誤判延續。
+- **如何確認 MCP 呼叫到底有沒有成功？**
+   - 系統已加入 per-turn 事件監聽 log，請在 `storage/debug.log` 搜尋 `TurnEvent` 關鍵字。
+   - 主要標記：
+      - `tool.start`：模型已開始呼叫工具（可視為 MCP/工具呼叫起點）
+      - `tool.end`：工具回傳完成（可檢查 result 是否 success/failure）
+      - `session.idle`：本輪對話正式收斂
+      - `session.error`：SDK 回合內部錯誤
+   - 若只看到 `tool.start` 但沒有 `tool.end` 或 `session.idle`，表示回合可能卡在工具執行或事件收斂階段。
 - **Agent 無法讀取儲存好的憑證 (Secret Manager)**：
   - 若在 Windows/macOS **本機**執行，憑證將會存放在作業系統的 Credential Manager 內，請檢查 OS 層級管理員 (`keyring` 負責存取)。
   - 若在 **Docker** 環境執行，Secret Manager 會預設回退使用加密檔案 `.secrets.enc`。如果容器重啟後憑證遺失，請檢查是否有一併掛載 `./storage:/app/storage`，且您的 `.env` 內是否有正確的 `SECRET_MASTER_KEY` (初次啟動時自動生成)。
@@ -239,7 +277,7 @@ graph TD
   2. **SDK send_and_wait 極限護盾 (Timeout Safeguard)**：
      主循環的 `Orchestrator` 使用 SDK 原生 `send_and_wait()` 統一處理發送與等待：
      - **120 秒**作為整體回應極限，逾時自動回傳逾時訊息。
-     - 管線異常 (OSError/BrokenPipeError) 自動 invalidate session，下輪自動 resume 或建立新 session。
+   - 管線異常 (OSError/BrokenPipeError) 會先進行 Session 保護與降級重試；Supervisor 不會因 idle timeout 被強制重建。
   3. **背景衝刺與主動推播 (Background Execution & Injection)**：
      背景工程師在獨立 Workspace (`internal_mechanic_workspace`) 開發完畢後，會「合成一個系統事件 (AgentEvent)」並重新呼叫 Supervisor 所在的使用者 Session。
   4. **自然對話完工通知 (Humanized Push Notification)**：

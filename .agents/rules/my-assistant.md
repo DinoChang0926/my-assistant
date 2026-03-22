@@ -20,6 +20,7 @@ trigger: always_on
     - 所有涉及 Copilot SDK 的通訊必須在「主事件迴圈」(Main Event Loop) 中執行。
     - Telegram Bot 等外部感知層應使用異步啟動，嚴禁開啟獨立執行緒與 SDK 搶奪 stdin/stdout 管道，以避免 `OSError: [Errno 22] Invalid argument`。
 - **衍生狀態一致性守則**：當 `orchestrator.py` 的任何程式碼路徑中更新了 `sdk_tools`（例如 Session 升級、重試），**必須**同步重新計算所有由其衍生的狀態，特別是 `route_config.system_prompt` 中的 **Tool Catalog**。禁止在未更新衍生狀態的情況下重建 Session，以防止 AI 產生重複激活的循環。
+- **判斷修復優先原則（Anti-Hardcode）**：當發現 Agent 出現判斷失準（如誤判工具不可用、誤判降級狀態），**優先修復判斷機制本身**（例如補充 system prompt 規則、加入當輪可驗證證據檢查、增加自我校正重試），不得以硬編碼流程分支直接繞過模型判斷作為長期解法。僅在緊急止血且可回退的情境下，才可暫時採用硬編碼，並需在同次任務內補上正式修復方案與文件說明。
 - **SUPERVISOR Session 不可侵犯原則**：`telegram_6673258916_supervisor` 等主流程 Session 在任何架構升級或優化改動中**必須保持持久性**。Copilot SDK 的 Session 在工具集設定後即鎖定，無法動態修改。任何需要擴充工具的情境，**唯一合法路徑**是透過 `delegate_to_mechanic` 委派給 Sub-agent，絕不允許在 SUPERVISOR 自身重建 Session 以換取工具。違反此原則會導致使用者對話記憶永久消失。
 - **事件監聽回收**：確保所有 SDK 事件監聯 (session.on) 都在對話結束後正確呼叫 `unsubscribe()`。
 - **Import 集中管理**：所有 `import` 語句必須置於檔案頂部的 import 區塊。禁止在函式體、closure 或 except 區塊內散落 `import`（唯一例外：為避免循環依賴而刻意延遲的 import，須加上 `# deferred import` 註解說明原因）。
@@ -48,3 +49,4 @@ trigger: always_on
 - **禁止以 event log 取代 runtime log**：`event_log.json` 僅供流程回溯，不得作為程式異常的唯一判斷依據。
 - **log_reader 查詢策略**：查詢 log 時必須優先 `mode=summary`，並搭配 `keyword` + `tail_lines` 縮小範圍；除非使用者明確要求展開，否則不得直接使用大段 `raw` 輸出。
 - **log_reader 輸出上限**：單次 `log_reader` 回傳內容建議上限為 2000 字元，嚴禁一次貼出整份 log 內容，避免 session 過長導致 `400 invalid_request_body`。
+- **禁止使用 print() 作為日誌輸出**：所有 `src/` 下的模組必須使用 `logging` 模組（`logger = logging.getLogger("<module_name>")`) 記錄訊息，嚴禁使用 `print()` 輸出執行狀態、啟動訊息或錯誤資訊。`print()` 的輸出不會寫入 `storage/debug.log`，導致生產環境與測試階段無法追蹤問題。新增功能時，所有關鍵操作（啟動、連接、降級、恢復、錯誤）都必須透過 `logger.info/warning/error` 寫入 log。

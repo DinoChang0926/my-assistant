@@ -75,6 +75,7 @@ python -m src.main
 - **建置**：本機測試成功後，執行 `wsl docker compose build`。
 - **啟動**：執行 `wsl docker compose up -d`。
 - **驗證**：確保 Dockerfile 的權限設定、相依套件與 Volume 掛載在容器內運作正常。
+- **驗證後關閉（必做）**：若本次僅為測試驗證，完成後必須執行 `wsl docker compose down` 回收容器與網路，避免殘留實例造成 Telegram polling 衝突或資源佔用。
 
 ### 5. 文件同步更新 (Documentation) ← 必做，勿跳過
 - **同一次對話內更新**：功能開發完成並驗證後，必須在**同一次對話 (session)** 內完成 `README.md` 的更新，不可等到下次對話再補。

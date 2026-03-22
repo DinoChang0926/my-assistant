@@ -1,10 +1,14 @@
 import os
 import sys
+import time
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
 # 初始化 FastMCP
 mcp = FastMCP("my-tools")
+START_TIME = time.time()
 
 # 設定基礎目錄以便 import atomic 工具與 src
 BASE_DIR = Path(__file__).parent.absolute()
@@ -28,6 +32,19 @@ from atomic.static_tool_google_calendar import google_calendar
 from atomic.static_tool_schedule_reminder import schedule_reminder
 from atomic.static_tool_log_reader import log_reader
 
+REGISTERED_TOOLS = [
+    "web_search",
+    "url_fetcher",
+    "local_memory",
+    "secret_manager_store",
+    "secret_manager_read",
+    "secret_manager_delete",
+    "google_auth",
+    "google_calendar",
+    "schedule_reminder",
+    "log_reader",
+]
+
 # 註冊工具
 for fn in [
     web_search, url_fetcher, local_memory,
@@ -36,6 +53,22 @@ for fn in [
     log_reader
 ]:
     mcp.tool()(fn)
+
+
+@mcp.custom_route("/status", methods=["GET"], include_in_schema=True)
+async def status_route(_request: Request) -> JSONResponse:
+    uptime_seconds = round(time.time() - START_TIME, 2)
+    return JSONResponse(
+        {
+            "status": "ok",
+            "service": "my-tools-mcp",
+            "transport": "sse",
+            "pid": os.getpid(),
+            "uptime_seconds": uptime_seconds,
+            "tools_count": len(REGISTERED_TOOLS),
+            "tools": REGISTERED_TOOLS,
+        }
+    )
 
 if __name__ == "__main__":
     # 支援透過環境變數注入 STORAGE_PATH
